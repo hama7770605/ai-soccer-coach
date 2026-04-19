@@ -1,0 +1,1784 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#ea580c" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="AI Coach" />
+<title>AI Coach for Football - サッカーAIパーソナル・コーチ</title>
+
+<!-- PWA Manifest (inline via data URI) -->
+<link rel="manifest" id="manifest-link" />
+<link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='40' fill='%23ea580c'/><text x='96' y='128' font-size='110' text-anchor='middle' font-family='Arial'>⚽</text></svg>" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466124/drawing_utils.js" crossorigin="anonymous"></script>
+
+<style>
+  :root {
+    --primary: #ea580c;
+    --primary-dark: #c2410c;
+    --primary-light: #f97316;
+    --accent: #fbbf24;
+    --danger: #ef4444;
+    --bg: #f6f8f7;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; background: var(--bg); color: #1a1a1a; overscroll-behavior: none; }
+  .app { max-width: 480px; margin: 0 auto; background: white; min-height: 100vh; box-shadow: 0 0 40px rgba(0,0,0,0.08); position: relative; overflow: hidden; }
+  .tab-btn.active { color: var(--primary); }
+  .tab-btn.active svg { stroke: var(--primary); }
+  .gradient-hero { background: linear-gradient(135deg, #ea580c 0%, #fb923c 100%); }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:active { background: var(--primary-dark); transform: scale(0.98); }
+  .btn-accent { background: var(--accent); color: #1a1a1a; }
+  .btn-danger { background: var(--danger); color: white; }
+  .card { background: white; border-radius: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .hero-ball { font-size: 42px; display: inline-block; animation: spin 8s linear infinite; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .pulse-dot { background: #ef4444; border-radius: 50%; width: 10px; height: 10px; display: inline-block; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .msg-user { background: var(--primary); color: white; border-radius: 16px 16px 4px 16px; }
+  .msg-ai { background: #fff5ec; color: #1a1a1a; border-radius: 16px 16px 16px 4px; }
+  .typing::after { content: '...'; animation: dots 1.5s steps(4, end) infinite; }
+  @keyframes dots { 0%, 20% { content: ''; } 40% { content: '.'; } 60% { content: '..'; } 80%, 100% { content: '...'; } }
+  video, canvas { border-radius: 12px; }
+  .scroll-hide::-webkit-scrollbar { display: none; }
+  .scroll-hide { scrollbar-width: none; }
+  .fade-in { animation: fadeIn 0.25s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .chip { padding: 6px 12px; border-radius: 999px; font-size: 12px; background: #fff0e0; color: #ea580c; font-weight: 600; }
+  .chip-accent { background: #fff5d1; color: #8a6d00; }
+  /* 戦術ボード */
+  .pitch-container { touch-action: none; user-select: none; -webkit-user-select: none; }
+  .player-token { cursor: grab; transition: filter 0.15s; }
+  .player-token.selected circle { filter: drop-shadow(0 0 6px #fbbf24); }
+  .tb-toolbar-btn { padding: 8px; border-radius: 10px; background: #f3f4f6; display: flex; align-items: center; justify-content: center; min-width: 42px; min-height: 42px; }
+  .tb-toolbar-btn.active { background: var(--primary); color: white; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: flex; align-items: flex-end; justify-content: center; }
+  .modal-sheet { background: white; width: 100%; max-width: 480px; border-radius: 20px 20px 0 0; padding: 20px; max-height: 85vh; overflow-y: auto; animation: slideUp 0.25s ease-out; }
+  @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: white; padding: 10px 20px; border-radius: 24px; font-size: 13px; z-index: 200; animation: fadeInUp 0.3s; }
+  @keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  .nav-bar { padding-bottom: calc(8px + var(--safe-bottom)); }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- ヘッダー -->
+  <header class="gradient-hero text-white px-5 pt-5 pb-4 relative">
+    <div class="flex justify-between items-center">
+      <div class="flex-1 min-w-0">
+        <div class="text-[11px] opacity-80 tracking-wider">AI COACH FOR FOOTBALL</div>
+        <div class="text-xl font-bold mt-0.5 truncate" id="header-title">こんにちは</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="header-avatar-btn" onclick="openProfileSwitcher()" class="w-9 h-9 rounded-full bg-white flex items-center justify-center shadow" aria-label="プロフィール切替">
+          <span id="header-avatar" class="text-xl">⚽</span>
+        </button>
+        <button onclick="openSettings()" class="w-9 h-9 rounded-full bg-white/15 active:bg-white/25 flex items-center justify-center" aria-label="設定">
+          <svg width="18" height="18" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="2.5"/><path d="M9 1v2M9 15v2M1 9h2M15 9h2M3.3 3.3l1.4 1.4M13.3 13.3l1.4 1.4M3.3 14.7l1.4-1.4M13.3 4.7l1.4-1.4"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="header-sub" class="mt-1 text-sm opacity-90">今日もコツコツ積み上げていこう。</div>
+  </header>
+
+  <!-- メインコンテンツ -->
+  <main id="main" class="pb-28"></main>
+
+  <!-- 下タブ -->
+  <nav class="nav-bar fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] bg-white border-t border-gray-200 flex justify-around pt-2 z-50">
+    <button class="tab-btn flex flex-col items-center py-1 px-2 text-gray-500 active" data-tab="home">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+      <span class="text-[10px] mt-0.5">ホーム</span>
+    </button>
+    <button class="tab-btn flex flex-col items-center py-1 px-2 text-gray-500" data-tab="form">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3"/></svg>
+      <span class="text-[10px] mt-0.5">診断</span>
+    </button>
+    <button class="tab-btn flex flex-col items-center py-1 px-2 text-gray-500" data-tab="chat">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="text-[10px] mt-0.5">戦術</span>
+    </button>
+    <button class="tab-btn flex flex-col items-center py-1 px-2 text-gray-500" data-tab="board">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M12 4v16M2 8h4M2 12h4M2 16h4M18 8h4M18 12h4M18 16h4"/></svg>
+      <span class="text-[10px] mt-0.5">ボード</span>
+    </button>
+    <button class="tab-btn flex flex-col items-center py-1 px-2 text-gray-500" data-tab="motivation">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg>
+      <span class="text-[10px] mt-0.5">継続</span>
+    </button>
+  </nav>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+
+<script>
+// =============================================================
+// ストレージ（localStorage 永続化 / マルチプロフィール対応）
+// =============================================================
+const LEGACY_KEY = 'ai-coach-football-v1';
+const PROFILES_KEY = 'ai-coach-profiles';
+const ACTIVE_KEY = 'ai-coach-active';
+const DATA_PREFIX = 'ai-coach-data-';
+const AVATAR_OPTIONS = ['⚽','🔥','⭐','⚡','🏆','🥅','🎯','🦁','🐯','🦅','🐺','🐉','🦈','👑','💪','🚀'];
+
+let PROFILES = [];          // [{ id, name, avatar, createdAt, lastUsed }]
+let ACTIVE_PROFILE_ID = null;
+let DATA = null;
+
+const defaultData = () => ({
+  user: { name: 'あなた', createdAt: Date.now() },
+  streak: 0,
+  practiceLog: [],          // [{ date: 'YYYY-MM-DD', menus: [...] }]
+  diagnoses: [],            // [{ id, date, scores:[], tips:[], nextDrill }]
+  chatHistory: [
+    { role: 'ai', text: 'こんにちは！今日は何について相談したい？「次の試合、相手が格上なんだけどどう守ればいい？」のように具体的に聞いてみてください。' }
+  ],
+  plays: [],                // [{ id, name, formation, frames:[...], updatedAt }]
+  settings: { theme: 'light', position: 'MF', team: 'マイチーム' },
+});
+
+function loadProfiles() {
+  try {
+    const raw = localStorage.getItem(PROFILES_KEY);
+    PROFILES = raw ? JSON.parse(raw) : [];
+  } catch (e) { PROFILES = []; }
+  try { ACTIVE_PROFILE_ID = localStorage.getItem(ACTIVE_KEY) || null; } catch (e) { ACTIVE_PROFILE_ID = null; }
+}
+
+function saveProfiles() {
+  try {
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(PROFILES));
+    if (ACTIVE_PROFILE_ID) localStorage.setItem(ACTIVE_KEY, ACTIVE_PROFILE_ID);
+    else localStorage.removeItem(ACTIVE_KEY);
+  } catch (e) { toast('プロフィール保存に失敗しました'); }
+}
+
+function createProfile(name, avatar) {
+  const id = 'prof-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  const prof = { id, name: name.trim() || '選手', avatar: avatar || '⚽', createdAt: Date.now(), lastUsed: Date.now() };
+  PROFILES.push(prof);
+  // 新規プロフィール用のデフォルトデータを保存
+  const data = defaultData();
+  data.user.name = prof.name;
+  try { localStorage.setItem(DATA_PREFIX + id, JSON.stringify(data)); } catch(e){}
+  saveProfiles();
+  return prof;
+}
+
+function deleteProfile(id) {
+  PROFILES = PROFILES.filter(p => p.id !== id);
+  try { localStorage.removeItem(DATA_PREFIX + id); } catch(e){}
+  if (ACTIVE_PROFILE_ID === id) {
+    ACTIVE_PROFILE_ID = PROFILES.length > 0 ? PROFILES[0].id : null;
+  }
+  saveProfiles();
+}
+
+function activateProfile(id) {
+  const p = PROFILES.find(x => x.id === id);
+  if (!p) return;
+  ACTIVE_PROFILE_ID = id;
+  p.lastUsed = Date.now();
+  saveProfiles();
+  DATA = loadData();
+}
+
+function loadData() {
+  if (!ACTIVE_PROFILE_ID) return defaultData();
+  try {
+    const raw = localStorage.getItem(DATA_PREFIX + ACTIVE_PROFILE_ID);
+    if (!raw) return defaultData();
+    const parsed = JSON.parse(raw);
+    return Object.assign(defaultData(), parsed);
+  } catch (e) {
+    console.warn('Storage load failed, using defaults', e);
+    return defaultData();
+  }
+}
+
+function saveData() {
+  if (!ACTIVE_PROFILE_ID) return;
+  try {
+    localStorage.setItem(DATA_PREFIX + ACTIVE_PROFILE_ID, JSON.stringify(DATA));
+  } catch (e) {
+    toast('保存に失敗しました（ストレージ容量の確認を）');
+  }
+}
+
+function migrateLegacy() {
+  // v1 データがあって、まだプロフィールが1つも無ければ自動移行
+  try {
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (!legacy || PROFILES.length > 0) return;
+    const obj = JSON.parse(legacy);
+    const name = (obj && obj.user && obj.user.name) || 'あなた';
+    const prof = createProfile(name, '⚽');
+    localStorage.setItem(DATA_PREFIX + prof.id, legacy);
+    ACTIVE_PROFILE_ID = prof.id;
+    saveProfiles();
+    localStorage.removeItem(LEGACY_KEY);
+  } catch (e) {}
+}
+
+function getActiveProfile() {
+  return PROFILES.find(p => p.id === ACTIVE_PROFILE_ID) || null;
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function computeStreak() {
+  // practiceLog から連続日数を計算
+  const logDates = new Set(DATA.practiceLog.map(p => p.date));
+  let n = 0;
+  const d = new Date();
+  for (let i = 0; i < 365; i++) {
+    const s = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (logDates.has(s)) n++;
+    else if (i > 0) break; // 今日未実施は0、それ以降で途切れたら終了
+    d.setDate(d.getDate() - 1);
+  }
+  return n;
+}
+
+function weekStats() {
+  const now = new Date();
+  const start = new Date(now); start.setDate(now.getDate() - 6);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    days.push({ date: ds, done: DATA.practiceLog.some(p => p.date === ds) });
+  }
+  return { days, trained: days.filter(d => d.done).length, goal: 5 };
+}
+
+// =============================================================
+// UI ユーティリティ
+// =============================================================
+function toast(msg, ms = 1800) {
+  const root = document.getElementById('toast-root');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  root.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+function openModal(html) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal-sheet">${html}</div></div>`;
+}
+function closeModal() {
+  document.getElementById('modal-root').innerHTML = '';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// =============================================================
+// アプリ状態
+// =============================================================
+const state = {
+  tab: 'home',
+  stream: null, camera: null, pose: null,
+  recording: false, recordFrames: [],
+  board: null, // 戦術ボード状態
+};
+
+// =============================================================
+// レンダラー
+// =============================================================
+const main = document.getElementById('main');
+
+function render() {
+  updateHeader();
+  if (!ACTIVE_PROFILE_ID) {
+    renderProfileGate();
+    updateTabs();
+    return;
+  }
+  switch (state.tab) {
+    case 'home': renderHome(); break;
+    case 'form': renderForm(); break;
+    case 'chat': renderChat(); break;
+    case 'board': renderBoard(); break;
+    case 'motivation': renderMotivation(); break;
+  }
+  updateTabs();
+}
+
+function updateHeader() {
+  const active = getActiveProfile();
+  const headerAvatar = document.getElementById('header-avatar');
+  if (headerAvatar) {
+    if (active) {
+      headerAvatar.textContent = active.avatar;
+      headerAvatar.classList.remove('hidden');
+    } else {
+      headerAvatar.classList.add('hidden');
+    }
+  }
+  if (!active || !DATA) {
+    document.getElementById('header-title').textContent = 'AI Coach for Football';
+    document.getElementById('header-sub').textContent = PROFILES.length > 0 ? 'プロフィールを選択してください' : 'まずはプロフィール作成から';
+    return;
+  }
+  const name = DATA.user.name || active.name || 'あなた';
+  const w = weekStats();
+  const titles = {
+    home: `こんにちは、${name}さん`,
+    form: 'フォーム診断',
+    chat: 'AIコーチに相談',
+    board: '戦術ボード',
+    motivation: '継続コーチング',
+  };
+  const subs = {
+    home: `今週 ${w.trained}/${w.goal}回・${DATA.streak}日連続達成中`,
+    form: 'カメラでプロとの差分を数値化',
+    chat: 'チームや相手の状況を教えてください',
+    board: '試合前のプレー設計とフォーメーション',
+    motivation: 'データから最適タイミングで声掛け',
+  };
+  document.getElementById('header-title').textContent = titles[state.tab];
+  document.getElementById('header-sub').textContent = subs[state.tab];
+}
+
+function updateTabs() {
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === state.tab);
+  });
+}
+
+function switchTab(tab) {
+  stopCamera();
+  state.tab = tab;
+  render();
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+// =============================================================
+// ホーム
+// =============================================================
+const menusToday = [
+  { title: 'インサイドキック', desc: '軸足と踏み込みの精度を意識', icon: '🎯', tag: '基礎', time: '10分' },
+  { title: 'ドリブル緩急', desc: 'タッチのリズムと視線の上げ下げ', icon: '⚡', tag: '実戦', time: '15分' },
+  { title: '対人ステップ', desc: '反応速度と重心移動', icon: '🏃', tag: '瞬発', time: '5分' },
+];
+
+function renderHome() {
+  const w = weekStats();
+  const recentDiag = DATA.diagnoses[DATA.diagnoses.length - 1];
+  main.innerHTML = `
+    <div class="px-5 py-4 fade-in">
+      <!-- ストリーク -->
+      <div class="card p-4 mb-4 flex items-center justify-between">
+        <div>
+          <div class="text-xs text-gray-500">継続日数</div>
+          <div class="flex items-baseline gap-1">
+            <span class="text-4xl font-black text-[var(--primary)]">${DATA.streak}</span>
+            <span class="text-sm text-gray-600">日</span>
+            <span class="ml-2 text-2xl">🔥</span>
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-xs text-gray-500">今週</div>
+          <div class="text-xl font-bold">${w.trained} <span class="text-sm text-gray-500 font-normal">/ ${w.goal}回</span></div>
+          <div class="w-24 h-1.5 bg-gray-200 rounded-full mt-1 overflow-hidden">
+            <div class="h-full bg-[var(--primary)]" style="width:${Math.min(100, (w.trained/w.goal)*100)}%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AIからの今日の提案 -->
+      <div class="mb-2 flex items-center justify-between">
+        <h2 class="font-bold text-gray-800">AIが選んだ今日のメニュー</h2>
+        <span class="chip">${recentDiag ? '診断に基づく' : 'バランス重視'}</span>
+      </div>
+      <div class="space-y-2 mb-5">
+        ${menusToday.map((m, i) => `
+          <button class="card p-3 w-full flex items-center text-left active:scale-[0.98] transition" onclick="logPractice(${i})">
+            <div class="w-11 h-11 rounded-xl bg-orange-50 flex items-center justify-center text-xl mr-3">${m.icon}</div>
+            <div class="flex-1 min-w-0">
+              <div class="font-bold text-sm">${m.title}</div>
+              <div class="text-xs text-gray-500 mt-0.5 truncate">${m.desc}</div>
+            </div>
+            <div class="text-right ml-2">
+              <div class="text-[10px] text-[var(--primary)] font-bold">${m.tag}</div>
+              <div class="text-[10px] text-gray-400 mt-0.5">${m.time}</div>
+            </div>
+          </button>
+        `).join('')}
+      </div>
+
+      <!-- クイックアクション -->
+      <h2 class="font-bold text-gray-800 mb-2">クイックアクション</h2>
+      <div class="grid grid-cols-2 gap-2 mb-5">
+        <button onclick="switchTab('form')" class="btn-primary rounded-2xl py-5 text-sm font-bold flex flex-col items-center gap-1">
+          <span class="text-2xl">📹</span>フォーム撮影
+        </button>
+        <button onclick="switchTab('board')" class="btn-accent rounded-2xl py-5 text-sm font-bold flex flex-col items-center gap-1">
+          <span class="text-2xl">📋</span>戦術ボード
+        </button>
+      </div>
+
+      <!-- 最新の診断 -->
+      ${recentDiag ? `
+        <h2 class="font-bold text-gray-800 mb-2">最新の診断</h2>
+        <div class="card p-4 mb-4">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-xs text-gray-500">${recentDiag.date}</span>
+            <button onclick="switchTab('form')" class="text-xs text-[var(--primary)] font-bold">詳細→</button>
+          </div>
+          <div class="grid grid-cols-3 gap-2">
+            ${recentDiag.scores.map(s => `
+              <div class="text-center">
+                <div class="text-[10px] text-gray-500">${s.label}</div>
+                <div class="text-xl font-black" style="color:${scoreColor(s.score)}">${s.score}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- AIコーチからのメッセージ -->
+      <div class="card p-4 border-l-4 border-[var(--primary)]">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-lg">🧠</span>
+          <span class="text-xs font-bold text-[var(--primary)]">AIコーチから</span>
+        </div>
+        <p class="text-sm leading-relaxed text-gray-700">
+          ${getMotivationalMessage()}
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+function getMotivationalMessage() {
+  const s = DATA.streak;
+  if (s === 0) return 'まずは今日の1本目、インサイドキックから始めよう。小さな一歩が一番大事。';
+  if (s < 3) return `${s}日目。最初の3日を超えれば脳が習慣として記憶し始めます。続けよう。`;
+  if (s < 7) return `${s}日連続！週末まで残りあと少し。`;
+  if (s < 30) return `${s}日連続、継続力がプロ。明日は軽めメニューで疲労を抜こう。`;
+  return `${s}日連続。もはや習慣。次は技術の質にこだわる段階です。`;
+}
+
+function logPractice(i) {
+  const m = menusToday[i];
+  const today = todayStr();
+  let entry = DATA.practiceLog.find(p => p.date === today);
+  if (!entry) { entry = { date: today, menus: [] }; DATA.practiceLog.push(entry); }
+  entry.menus.push({ title: m.title, time: m.time, at: Date.now() });
+  DATA.streak = computeStreak();
+  saveData();
+  toast(`「${m.title}」を記録しました 🔥`);
+  render();
+}
+
+function scoreColor(s) {
+  if (s >= 80) return '#ea580c';
+  if (s >= 60) return '#eab308';
+  return '#ef4444';
+}
+
+// =============================================================
+// フォーム診断（MediaPipe）
+// =============================================================
+function renderForm() {
+  const history = DATA.diagnoses.slice().reverse().slice(0, 10);
+  main.innerHTML = `
+    <div class="px-5 py-4 fade-in">
+      <div class="card p-3 mb-3">
+        <p class="text-xs text-gray-600 leading-relaxed">
+          カメラで自分のフォームを撮影すると、AIが骨格を検出してプロの動きと比較します。キック・ドリブル・姿勢のチェックに。
+        </p>
+      </div>
+
+      <div class="relative bg-gray-900 rounded-2xl overflow-hidden" style="aspect-ratio: 3/4;">
+        <video id="cam-video" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover" style="transform: scaleX(-1);"></video>
+        <canvas id="cam-canvas" class="absolute inset-0 w-full h-full" style="transform: scaleX(-1);"></canvas>
+        <div id="cam-overlay" class="absolute inset-0 flex flex-col items-center justify-center text-white text-center p-6">
+          <div class="text-5xl mb-2">📱</div>
+          <p class="text-sm opacity-90 mb-4">スマホを立てかけて、全身が映るようにしてください</p>
+          <button onclick="startCamera()" class="btn-primary px-6 py-2.5 rounded-full text-sm font-bold">カメラを起動する</button>
+          <p class="text-[10px] opacity-60 mt-3">初回はブラウザがカメラ使用許可を求めます</p>
+        </div>
+        <div id="cam-badge" class="absolute top-3 left-3 bg-black/60 text-white px-2 py-1 rounded-full text-xs flex items-center gap-1 hidden">
+          <span class="pulse-dot"></span><span>LIVE</span>
+        </div>
+        <div id="cam-fps" class="absolute top-3 right-3 bg-black/60 text-white px-2 py-1 rounded-full text-[10px] hidden"></div>
+      </div>
+
+      <div class="mt-4 flex gap-2">
+        <button id="btn-record" onclick="toggleRecording()" class="flex-1 btn-primary py-3 rounded-xl font-bold text-sm hidden">⚽ 診断する（3秒撮影）</button>
+        <button id="btn-stop" onclick="stopCamera()" class="flex-1 border border-gray-300 py-3 rounded-xl font-bold text-sm hidden">停止する</button>
+      </div>
+
+      ${history.length > 0 ? `
+        <div class="mt-5">
+          <div class="flex justify-between items-center mb-2">
+            <h2 class="font-bold text-gray-800">診断履歴（${history.length}件）</h2>
+            ${history.length > 0 ? `<button onclick="clearDiagnoses()" class="text-xs text-gray-500">削除</button>` : ''}
+          </div>
+          <div class="space-y-2">
+            ${history.map((d, idx) => renderDiagnosisCard(d, idx === 0)).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderDiagnosisCard(a, latest) {
+  return `
+    <div class="card p-4 ${latest ? 'border-2 border-[var(--primary)]' : ''}">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <h3 class="font-bold text-gray-800 text-sm">${a.date}</h3>
+          ${latest ? '<span class="chip-accent chip">最新</span>' : ''}
+        </div>
+        <span class="text-xs text-gray-500">${a.overall}点</span>
+      </div>
+      <div class="grid grid-cols-3 gap-2 mb-3">
+        ${a.scores.map(s => `
+          <div class="text-center">
+            <div class="text-[10px] text-gray-500 mb-1">${s.label}</div>
+            <div class="text-2xl font-black" style="color:${scoreColor(s.score)}">${s.score}</div>
+            <div class="w-full h-1 bg-gray-100 rounded-full mt-1 overflow-hidden">
+              <div class="h-full" style="width:${s.score}%;background:${scoreColor(s.score)}"></div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="border-t pt-3">
+        <div class="text-xs font-bold text-[var(--primary)] mb-1">💡 改善ポイント</div>
+        <ul class="space-y-1.5">
+          ${a.tips.map(t => `<li class="text-xs text-gray-700 leading-relaxed">・${t}</li>`).join('')}
+        </ul>
+      </div>
+      <div class="border-t mt-3 pt-3">
+        <div class="text-xs font-bold text-gray-700 mb-1">次におすすめの練習</div>
+        <div class="text-xs text-gray-600">${a.nextDrill}</div>
+      </div>
+    </div>
+  `;
+}
+
+function clearDiagnoses() {
+  if (!confirm('診断履歴を全て削除しますか？')) return;
+  DATA.diagnoses = [];
+  saveData();
+  render();
+}
+
+async function startCamera() {
+  try {
+    const video = document.getElementById('cam-video');
+    const canvas = document.getElementById('cam-canvas');
+    const overlay = document.getElementById('cam-overlay');
+    const badge = document.getElementById('cam-badge');
+    const fpsEl = document.getElementById('cam-fps');
+
+    overlay.innerHTML = '<div class="text-white text-sm opacity-80">起動中...</div>';
+
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 720 }, height: { ideal: 960 } },
+      audio: false,
+    });
+    video.srcObject = state.stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    video.play();
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+
+    state.pose = new Pose({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${f}` });
+    state.pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+    let lastT = performance.now();
+    state.pose.onResults(results => {
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (results.poseLandmarks) {
+        drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#fbbf24', lineWidth: 3 });
+        drawLandmarks(ctx, results.poseLandmarks, { color: '#ea580c', lineWidth: 1, radius: 4 });
+        if (state.recording) state.recordFrames.push(extractAngles(results.poseLandmarks));
+      }
+      ctx.restore();
+      const now = performance.now();
+      fpsEl.textContent = `${Math.round(1000 / (now - lastT))} fps`;
+      lastT = now;
+    });
+
+    state.camera = new Camera(video, { onFrame: async () => { await state.pose.send({ image: video }); }, width: video.videoWidth, height: video.videoHeight });
+    state.camera.start();
+
+    overlay.classList.add('hidden');
+    badge.classList.remove('hidden');
+    fpsEl.classList.remove('hidden');
+    document.getElementById('btn-record').classList.remove('hidden');
+    document.getElementById('btn-stop').classList.remove('hidden');
+  } catch (e) {
+    console.error(e);
+    alert('カメラを起動できませんでした。\n' + (e.message || e));
+    const overlay = document.getElementById('cam-overlay');
+    if (overlay) {
+      overlay.classList.remove('hidden');
+      overlay.innerHTML = `<div class="text-red-300 text-sm mb-4">起動エラー: ${escapeHtml(e.message||'')}</div><button onclick="startCamera()" class="btn-primary px-6 py-2.5 rounded-full text-sm font-bold">再試行</button>`;
+    }
+  }
+}
+
+function stopCamera() {
+  if (state.camera) { try { state.camera.stop(); } catch(e){} state.camera = null; }
+  if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
+  if (state.pose) { try { state.pose.close(); } catch(e){} state.pose = null; }
+  state.recording = false;
+  state.recordFrames = [];
+}
+
+function extractAngles(lm) {
+  function ang(a, b, c) {
+    const v1 = { x: a.x - b.x, y: a.y - b.y };
+    const v2 = { x: c.x - b.x, y: c.y - b.y };
+    const dot = v1.x*v2.x + v1.y*v2.y;
+    const m1 = Math.hypot(v1.x, v1.y), m2 = Math.hypot(v2.x, v2.y);
+    return Math.acos(Math.max(-1, Math.min(1, dot/(m1*m2)))) * 180 / Math.PI;
+  }
+  return {
+    leftKnee: ang(lm[23], lm[25], lm[27]),
+    rightKnee: ang(lm[24], lm[26], lm[28]),
+    leftHip: ang(lm[11], lm[23], lm[25]),
+    rightHip: ang(lm[12], lm[24], lm[26]),
+    trunk: ang(lm[11], lm[23], lm[24]),
+    shoulderTilt: Math.abs(lm[11].y - lm[12].y) * 100,
+  };
+}
+
+function toggleRecording() {
+  const btn = document.getElementById('btn-record');
+  if (!state.recording) {
+    state.recording = true;
+    state.recordFrames = [];
+    btn.textContent = '⏺ 撮影中... (3秒)';
+    btn.classList.remove('btn-primary');
+    btn.style.background = '#ef4444'; btn.style.color = 'white';
+    setTimeout(() => { if (state.recording) toggleRecording(); }, 3000);
+  } else {
+    state.recording = false;
+    btn.textContent = '⚽ 診断する（3秒撮影）';
+    btn.classList.add('btn-primary');
+    btn.style.background = ''; btn.style.color = '';
+    analyzeFrames();
+  }
+}
+
+function analyzeFrames() {
+  const frames = state.recordFrames;
+  if (frames.length < 5) { alert('データが足りません。全身が映るようにしてもう一度撮影してください。'); return; }
+  const keys = Object.keys(frames[0]);
+  const avg = {};
+  keys.forEach(k => avg[k] = frames.reduce((s, f) => s + f[k], 0) / frames.length);
+
+  const PRO = { leftKnee: 155, rightKnee: 155, leftHip: 165, rightHip: 165, trunk: 170, shoulderTilt: 3 };
+  const scores = [];
+  const tips = [];
+
+  const kneeScore = Math.max(0, Math.min(100, 100 - Math.abs(avg.leftKnee + avg.rightKnee - PRO.leftKnee - PRO.rightKnee) * 0.8));
+  scores.push({ label: '下半身', score: Math.round(kneeScore) });
+  if (kneeScore < 75) tips.push('軸足の膝がやや曲がり過ぎています。踏み込み時に膝を伸ばし、股関節から振り抜く意識を。');
+
+  const trunkScore = Math.max(0, Math.min(100, 100 - Math.abs(avg.trunk - PRO.trunk) * 1.2));
+  scores.push({ label: '体幹', score: Math.round(trunkScore) });
+  if (trunkScore < 75) tips.push('体幹の前傾が強めです。頭からお尻までを一直線にして、インパクトで胸を張る意識を。');
+
+  const balanceScore = Math.max(0, Math.min(100, 100 - avg.shoulderTilt * 15));
+  scores.push({ label: 'バランス', score: Math.round(balanceScore) });
+  if (balanceScore < 75) tips.push('両肩の高さに左右差があります。インパクトまで両肩を水平に保つとミート精度が上がります。');
+
+  if (tips.length === 0) tips.push('全体的に良いフォームです。次はスピードを上げて同じ精度を維持できるか挑戦してみましょう。');
+
+  const overall = Math.round((kneeScore + trunkScore + balanceScore) / 3);
+  const nextDrill = kneeScore < trunkScore && kneeScore < balanceScore
+    ? '軸足強化：片足バランス30秒 × 左右3セット、階段ダッシュ10本'
+    : trunkScore < balanceScore
+    ? '体幹安定：プランク45秒 × 3セット、メディシンボールローテーション'
+    : 'バランス感覚：片足スクワット10回 × 左右3セット';
+
+  const entry = {
+    id: 'd-' + Date.now(),
+    date: new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric' }),
+    createdAt: Date.now(),
+    scores, tips, nextDrill, overall,
+  };
+  DATA.diagnoses.push(entry);
+  // 実行した日は練習ログにもカウント
+  const today = todayStr();
+  let logEntry = DATA.practiceLog.find(p => p.date === today);
+  if (!logEntry) { logEntry = { date: today, menus: [] }; DATA.practiceLog.push(logEntry); }
+  logEntry.menus.push({ title: 'フォーム診断', time: '3秒', at: Date.now() });
+  DATA.streak = computeStreak();
+  saveData();
+  toast('診断を保存しました');
+  renderForm();
+}
+
+// =============================================================
+// 戦術チャット
+// =============================================================
+const chatSuggestions = [
+  '格上相手にどう守ればいい？',
+  '4-4-2の弱点の突き方を教えて',
+  'サイドバックの守備のコツは？',
+  'セットプレーでゴールするには？',
+];
+
+function renderChat() {
+  main.innerHTML = `
+    <div class="flex flex-col" style="height: calc(100vh - 210px);">
+      <div id="chat-scroll" class="flex-1 overflow-y-auto px-4 py-3 scroll-hide">
+        <div class="flex justify-end mb-2"><button onclick="clearChat()" class="text-[11px] text-gray-400">履歴クリア</button></div>
+        ${DATA.chatHistory.map(m => renderMessage(m)).join('')}
+        <div id="typing"></div>
+      </div>
+      <div class="border-t bg-white p-3">
+        <div class="flex gap-2 overflow-x-auto scroll-hide mb-2">
+          ${chatSuggestions.map(s => `<button onclick="sendChat('${escapeHtml(s)}')" class="flex-shrink-0 text-xs border border-gray-300 rounded-full px-3 py-1.5 whitespace-nowrap">${s}</button>`).join('')}
+        </div>
+        <div class="flex gap-2">
+          <input id="chat-input" type="text" class="flex-1 border border-gray-300 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)]" placeholder="例：サイドからのクロスが多い相手の守り方" />
+          <button onclick="submitChat()" class="btn-primary w-11 h-11 rounded-full flex items-center justify-center">
+            <svg width="18" height="18" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  const input = document.getElementById('chat-input');
+  if (input) input.addEventListener('keypress', e => { if (e.key === 'Enter') submitChat(); });
+  scrollChatBottom();
+}
+
+function renderMessage(m) {
+  if (m.role === 'user') return `<div class="flex justify-end mb-3 fade-in"><div class="msg-user max-w-[80%] px-4 py-2.5 text-sm leading-relaxed">${escapeHtml(m.text)}</div></div>`;
+  return `<div class="flex mb-3 fade-in items-end gap-2"><div class="w-7 h-7 rounded-full bg-[var(--primary)] flex items-center justify-center text-white text-xs shrink-0">AI</div><div class="msg-ai max-w-[80%] px-4 py-2.5 text-sm leading-relaxed">${m.text}</div></div>`;
+}
+
+function submitChat() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  sendChat(text);
+}
+
+function clearChat() {
+  if (!confirm('チャット履歴を消去しますか？')) return;
+  DATA.chatHistory = defaultData().chatHistory;
+  saveData();
+  render();
+}
+
+function sendChat(text) {
+  DATA.chatHistory.push({ role: 'user', text });
+  saveData();
+  renderChat();
+  setTimeout(() => {
+    const typing = document.getElementById('typing');
+    if (typing) typing.innerHTML = `<div class="flex mb-3 fade-in items-end gap-2"><div class="w-7 h-7 rounded-full bg-[var(--primary)] flex items-center justify-center text-white text-xs shrink-0">AI</div><div class="msg-ai px-4 py-2.5 text-sm typing">考え中</div></div>`;
+    scrollChatBottom();
+  }, 150);
+  setTimeout(() => {
+    const reply = generateTacticalReply(text);
+    DATA.chatHistory.push({ role: 'ai', text: reply });
+    saveData();
+    renderChat();
+  }, 1300);
+}
+
+function generateTacticalReply(q) {
+  const lower = q.toLowerCase();
+  if (/格上|強い相手|強豪/.test(q)) {
+    return `格上相手では<b>守備の構造</b>が勝負を分けます。<br><br><b>1. 自陣の守備ブロックをコンパクトに</b>：最終ラインとボランチの間を10m以下に保ち、縦パスのコースを消す。<br><b>2. 二度追いせずチームで規制</b>：1人目のプレスで相手の体の向きを限定し、2人目が次のパスコースを消す。<br><b>3. 奪ったら最短でゴールへ</b>：ポゼッションを狙わず縦に速く、2〜3本でフィニッシュまで。<br><br>前チームの試合ログから、失点は右サイドのクロスが多いので、対面SHへの早めのプレスバックを指示しましょう。`;
+  }
+  if (/4-4-2|442/.test(lower) || /442/.test(q)) {
+    return `4-4-2の弱点は<b>ライン間のスペース</b>とボランチ脇です。<br><br>・2トップの1人が相手ボランチの前、もう1人が裏へ走り、SBを困らせる<br>・ライン間に顔を出すトップ下的な動きを1枚作る<br>・サイドチェンジで逆サイドのSHを置き去りに<br><br>戦術ボードで具体的な配置を組み立てると共有しやすいです。`;
+  }
+  if (/サイドバック|SB|サイド守備/.test(q)) {
+    return `SB守備の原則は<b>対面を縦に行かせない</b>こと。<br><br>・半身で構え内側の足を前に出して縦を切る<br>・距離は1.5〜2m、詰めすぎない<br>・クロスを上げさせない角度で遅らせ、味方のプレスバックを待つ<br>・裏のスペースはCBと連動でカバー<br><br>最初の一歩で<b>相手の利き足</b>を見極めるのが最重要。`;
+  }
+  if (/セットプレー|CK|FK|コーナー/.test(q)) {
+    return `アマチュアがセットプレーで得点するコツは<b>シンプル＆1つに絞る</b>こと。<br><br><b>コーナー：</b>ニア走り込み＋ファー待ち伏せの2択に絞り、ショートのフリで揺さぶる。こぼれ球狙いをペナルティアーク付近に必ず1枚。<br><b>FK直接：</b>22m以内で中央寄りなら狙う価値あり。壁の端を抜くシュートを毎日5本。<br><br>戦術ボードで配置を保存して共有すると精度が上がります。`;
+  }
+  if (/守備|守り|ディフェンス/.test(q)) {
+    return `チーム守備の原則は<b>ボールを追うのではなくコースを切る</b>。<br><br>・1人目が相手の視野を狭める（外か内か）<br>・2人目以降は1人目が切った方向前提に配置<br>・奪いどころは<b>サイドの低い位置</b>が現実的<br>・セカンドボール対策にボランチが少し引く`;
+  }
+  if (/攻撃|点|ゴール|得点/.test(q)) {
+    return `得点の仕組み化は<b>「誰が・どこで・何をする」を決める</b>こと。<br><br>・得点パターンを3つに絞る（サイド崩し／ロングカウンター／セットプレー）<br>・試合前に1つ優先パターンを決める<br>・FWは<b>ニアゾーンへの飛び込み</b>を毎試合3本作る<br>・サイドで詰まったら必ずやり直す`;
+  }
+  if (/モチベ|やる気|続か|継続/.test(q)) {
+    return `やる気ではなく<b>仕組み</b>で解決します。<br><br>・練習日時をカレンダーに先に入れる<br>・「10分だけ」でOKにする<br>・毎回このアプリに記録（可視化）<br>・仲間と月1試合の約束<br><br>ちなみに${DATA.user.name}さんは<b>${DATA.streak}日連続</b>継続中。自信を持って。`;
+  }
+  return `具体的に状況を教えてもらえると精度が上がります。<br><br>・相手のフォーメーションや強み／弱み<br>・自チームの得意な形<br>・スコアや残り時間など試合の局面<br><br>例：「相手が4-3-3で前から来る。自分はCB。縦パスを通されたくない」`;
+}
+
+function scrollChatBottom() {
+  const s = document.getElementById('chat-scroll');
+  if (s) s.scrollTop = s.scrollHeight;
+}
+
+// =============================================================
+// 戦術ボード（SVG + ドラッグ + フレーム管理 + プレー保存）
+// =============================================================
+const PITCH_W = 680, PITCH_H = 1050; // 縦型ピッチ
+const FORMATIONS = {
+  '4-4-2': [
+    { n: 1, x: 340, y: 980 }, // GK
+    { n: 2, x: 100, y: 820 }, { n: 3, x: 260, y: 850 }, { n: 4, x: 420, y: 850 }, { n: 5, x: 580, y: 820 },
+    { n: 6, x: 100, y: 600 }, { n: 7, x: 260, y: 600 }, { n: 8, x: 420, y: 600 }, { n: 9, x: 580, y: 600 },
+    { n: 10, x: 240, y: 320 }, { n: 11, x: 440, y: 320 },
+  ],
+  '4-3-3': [
+    { n: 1, x: 340, y: 980 },
+    { n: 2, x: 100, y: 820 }, { n: 3, x: 260, y: 850 }, { n: 4, x: 420, y: 850 }, { n: 5, x: 580, y: 820 },
+    { n: 6, x: 340, y: 670 }, { n: 7, x: 200, y: 600 }, { n: 8, x: 480, y: 600 },
+    { n: 9, x: 340, y: 280 }, { n: 10, x: 140, y: 380 }, { n: 11, x: 540, y: 380 },
+  ],
+  '4-2-3-1': [
+    { n: 1, x: 340, y: 980 },
+    { n: 2, x: 100, y: 820 }, { n: 3, x: 260, y: 850 }, { n: 4, x: 420, y: 850 }, { n: 5, x: 580, y: 820 },
+    { n: 6, x: 240, y: 680 }, { n: 7, x: 440, y: 680 },
+    { n: 8, x: 140, y: 480 }, { n: 9, x: 340, y: 500 }, { n: 10, x: 540, y: 480 },
+    { n: 11, x: 340, y: 280 },
+  ],
+  '3-5-2': [
+    { n: 1, x: 340, y: 980 },
+    { n: 2, x: 180, y: 850 }, { n: 3, x: 340, y: 870 }, { n: 4, x: 500, y: 850 },
+    { n: 5, x: 80, y: 640 }, { n: 6, x: 240, y: 650 }, { n: 7, x: 440, y: 650 }, { n: 8, x: 600, y: 640 }, { n: 9, x: 340, y: 520 },
+    { n: 10, x: 240, y: 300 }, { n: 11, x: 440, y: 300 },
+  ],
+  '5-3-2': [
+    { n: 1, x: 340, y: 980 },
+    { n: 2, x: 80, y: 830 }, { n: 3, x: 220, y: 850 }, { n: 4, x: 340, y: 870 }, { n: 5, x: 460, y: 850 }, { n: 6, x: 600, y: 830 },
+    { n: 7, x: 200, y: 620 }, { n: 8, x: 340, y: 640 }, { n: 9, x: 480, y: 620 },
+    { n: 10, x: 240, y: 320 }, { n: 11, x: 440, y: 320 },
+  ],
+};
+
+function newBoardState() {
+  return {
+    frames: [{ players: buildPlayers('4-4-2'), arrows: [] }],
+    frameIdx: 0,
+    tool: 'select', // select | arrow | dashed | ball
+    selectedId: null,
+    drawing: null,
+    formation: '4-4-2',
+    playingName: null,
+    playingId: null,
+    dirty: false,
+  };
+}
+
+function buildPlayers(formation) {
+  const f = FORMATIONS[formation] || FORMATIONS['4-4-2'];
+  const home = f.map(p => ({ id: 'h' + p.n, team: 'home', n: p.n, x: p.x, y: p.y }));
+  // 相手は対称配置（下→上反転）
+  const awayFormation = FORMATIONS[formation] || FORMATIONS['4-4-2'];
+  const away = awayFormation.map(p => ({ id: 'a' + p.n, team: 'away', n: p.n, x: PITCH_W - p.x, y: PITCH_H - p.y }));
+  const ball = { id: 'ball', team: 'ball', x: PITCH_W / 2, y: PITCH_H / 2 };
+  return [...home, ...away, ball];
+}
+
+function renderBoard() {
+  if (!state.board) state.board = newBoardState();
+  const b = state.board;
+  const frame = b.frames[b.frameIdx];
+  main.innerHTML = `
+    <div class="px-3 py-3 fade-in">
+      <!-- ツールバー -->
+      <div class="card p-2 mb-3 flex flex-wrap items-center gap-1.5">
+        <select id="formation-select" onchange="changeFormation(this.value)" class="text-xs border rounded-lg px-2 py-1.5 bg-white font-bold">
+          ${Object.keys(FORMATIONS).map(f => `<option ${f===b.formation?'selected':''}>${f}</option>`).join('')}
+        </select>
+        <button class="tb-toolbar-btn ${b.tool==='select'?'active':''}" onclick="setBoardTool('select')" title="選択・移動">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7 17 2-7 7-2z"/></svg>
+        </button>
+        <button class="tb-toolbar-btn ${b.tool==='arrow'?'active':''}" onclick="setBoardTool('arrow')" title="パス矢印">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </button>
+        <button class="tb-toolbar-btn ${b.tool==='dashed'?'active':''}" onclick="setBoardTool('dashed')" title="走る軌道（破線）">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3,3"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </button>
+        <button class="tb-toolbar-btn" onclick="undoArrow()" title="直前の矢印を取消">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14l-4-4 4-4M5 10h10a4 4 0 0 1 4 4v1"/></svg>
+        </button>
+        <button class="tb-toolbar-btn" onclick="clearArrows()" title="矢印を全消し">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+        </button>
+        <div class="flex-1"></div>
+        <button class="tb-toolbar-btn" onclick="resetFormation()" title="配置リセット">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+        </button>
+      </div>
+
+      <!-- ピッチ -->
+      <div class="pitch-container relative bg-[#2e7d4f] rounded-2xl overflow-hidden shadow-inner" style="aspect-ratio: ${PITCH_W}/${PITCH_H};">
+        <svg id="pitch-svg" viewBox="0 0 ${PITCH_W} ${PITCH_H}" class="w-full h-full block">
+          ${renderPitchLines()}
+          <g id="arrows-layer">${frame.arrows.map(renderArrow).join('')}</g>
+          <g id="preview-arrow"></g>
+          <g id="players-layer">${frame.players.map(renderPlayer).join('')}</g>
+        </svg>
+      </div>
+
+      <!-- フレーム管理 -->
+      <div class="card p-3 mt-3">
+        <div class="flex items-center justify-between mb-2">
+          <div class="font-bold text-sm text-gray-800">フレーム (${b.frameIdx + 1}/${b.frames.length})</div>
+          <div class="flex gap-1">
+            <button onclick="addFrame()" class="text-xs btn-primary px-3 py-1.5 rounded-lg font-bold">+ 追加</button>
+            <button onclick="playAnimation()" class="text-xs btn-accent px-3 py-1.5 rounded-lg font-bold">▶ 再生</button>
+          </div>
+        </div>
+        <div class="flex gap-1.5 overflow-x-auto scroll-hide pb-1">
+          ${b.frames.map((_, i) => `
+            <button onclick="setFrame(${i})" class="flex-shrink-0 w-12 h-12 rounded-lg text-xs font-bold ${i === b.frameIdx ? 'bg-[var(--primary)] text-white' : 'bg-gray-100 text-gray-600'}">${i + 1}</button>
+          `).join('')}
+          ${b.frames.length > 1 ? `<button onclick="removeFrame()" class="flex-shrink-0 w-12 h-12 rounded-lg text-xs font-bold bg-red-50 text-red-500">×</button>` : ''}
+        </div>
+      </div>
+
+      <!-- プレー管理 -->
+      <div class="card p-3 mt-3">
+        <div class="flex items-center justify-between mb-2">
+          <div class="font-bold text-sm text-gray-800">プレー保存 ${b.playingName ? `<span class="chip chip-accent ml-2">${escapeHtml(b.playingName)}</span>` : ''}</div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <button onclick="savePlay()" class="btn-primary py-2.5 rounded-lg text-xs font-bold">💾 保存</button>
+          <button onclick="openPlaysList()" class="border border-gray-300 py-2.5 rounded-lg text-xs font-bold">📂 開く</button>
+          <button onclick="exportBoardPNG()" class="border border-gray-300 py-2.5 rounded-lg text-xs font-bold">📷 画像</button>
+        </div>
+      </div>
+
+      <div class="text-[11px] text-gray-500 mt-3 leading-relaxed px-1">
+        ヒント：選手をドラッグで移動。矢印ツール選択時は選手同士or任意地点をドラッグで矢印が引けます。フレームを複数作って「▶ 再生」で動きを確認できます。
+      </div>
+    </div>
+  `;
+  attachBoardEvents();
+}
+
+function renderPitchLines() {
+  // 縦型ピッチ
+  const w = PITCH_W, h = PITCH_H;
+  const stroke = 'rgba(255,255,255,0.85)', strokeW = 2.5;
+  const pk = { // ペナルティエリア寸法（割合で）
+    big_w: 400, big_h: 165,
+    small_w: 180, small_h: 55,
+    circleR: 90,
+  };
+  return `
+    <!-- 芝パターン -->
+    <defs>
+      <pattern id="grass" x="0" y="0" width="${w/8}" height="${h/16}" patternUnits="userSpaceOnUse">
+        <rect width="${w/8}" height="${h/16}" fill="#2e7d4f"/>
+      </pattern>
+    </defs>
+    <rect width="${w}" height="${h}" fill="url(#grass)"/>
+    ${Array.from({length: 8}).map((_,i) => `<rect x="0" y="${i*h/8}" width="${w}" height="${h/16}" fill="${i%2===0 ? '#2e7d4f' : '#2f8253'}" opacity="${i%2===0 ? 0 : 0.6}"/>`).join('')}
+    <!-- 外枠 -->
+    <rect x="10" y="10" width="${w-20}" height="${h-20}" fill="none" stroke="${stroke}" stroke-width="${strokeW}"/>
+    <!-- センター -->
+    <line x1="10" y1="${h/2}" x2="${w-10}" y2="${h/2}" stroke="${stroke}" stroke-width="${strokeW}"/>
+    <circle cx="${w/2}" cy="${h/2}" r="${pk.circleR}" fill="none" stroke="${stroke}" stroke-width="${strokeW}"/>
+    <circle cx="${w/2}" cy="${h/2}" r="3" fill="${stroke}"/>
+    <!-- 上のペナ -->
+    <rect x="${(w-pk.big_w)/2}" y="10" width="${pk.big_w}" height="${pk.big_h}" fill="none" stroke="${stroke}" stroke-width="${strokeW}"/>
+    <rect x="${(w-pk.small_w)/2}" y="10" width="${pk.small_w}" height="${pk.small_h}" fill="none" stroke="${stroke}" stroke-width="${strokeW}"/>
+    <circle cx="${w/2}" cy="${10+110}" r="3" fill="${stroke}"/>
+    <!-- 下のペナ -->
+    <rect x="${(w-pk.big_w)/2}" y="${h-10-pk.big_h}" width="${pk.big_w}" height="${pk.big_h}" fill="none" stroke="${stroke}" stroke-width="${strokeW}"/>
+    <rect x="${(w-pk.small_w)/2}" y="${h-10-pk.small_h}" width="${pk.small_w}" height="${pk.small_h}" fill="none" stroke="${stroke}" stroke-width="${strokeW}"/>
+    <circle cx="${w/2}" cy="${h-10-110}" r="3" fill="${stroke}"/>
+    <!-- 矢印マーカー -->
+    <defs>
+      <marker id="arrow-head-solid" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="#fbbf24"/>
+      </marker>
+      <marker id="arrow-head-dashed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="#ffffff"/>
+      </marker>
+    </defs>
+  `;
+}
+
+function renderPlayer(p) {
+  if (p.team === 'ball') {
+    return `<g class="player-token" data-id="${p.id}" transform="translate(${p.x},${p.y})">
+      <circle r="14" fill="white" stroke="#111" stroke-width="2"/>
+      <text text-anchor="middle" dy="5" font-size="18">⚽</text>
+    </g>`;
+  }
+  const fill = p.team === 'home' ? '#dc2626' : '#1d4ed8';
+  const stroke = p.team === 'home' ? '#7f1d1d' : '#1e3a8a';
+  const sel = state.board && state.board.selectedId === p.id ? 'selected' : '';
+  return `<g class="player-token ${sel}" data-id="${p.id}" transform="translate(${p.x},${p.y})">
+    <circle r="24" fill="${fill}" stroke="${stroke}" stroke-width="2"/>
+    <text text-anchor="middle" dy="7" font-size="22" font-weight="900" fill="white">${p.n}</text>
+  </g>`;
+}
+
+function renderArrow(a) {
+  const dasharray = a.style === 'dashed' ? 'stroke-dasharray="8,5"' : '';
+  const stroke = a.style === 'dashed' ? '#ffffff' : '#fbbf24';
+  const marker = a.style === 'dashed' ? 'url(#arrow-head-dashed)' : 'url(#arrow-head-solid)';
+  return `<line x1="${a.x1}" y1="${a.y1}" x2="${a.x2}" y2="${a.y2}" stroke="${stroke}" stroke-width="4" stroke-linecap="round" marker-end="${marker}" ${dasharray}/>`;
+}
+
+function svgPoint(evt) {
+  const svg = document.getElementById('pitch-svg');
+  const pt = svg.createSVGPoint();
+  if (evt.touches && evt.touches.length) { pt.x = evt.touches[0].clientX; pt.y = evt.touches[0].clientY; }
+  else if (evt.changedTouches && evt.changedTouches.length) { pt.x = evt.changedTouches[0].clientX; pt.y = evt.changedTouches[0].clientY; }
+  else { pt.x = evt.clientX; pt.y = evt.clientY; }
+  const ctm = svg.getScreenCTM().inverse();
+  return pt.matrixTransform(ctm);
+}
+
+function attachBoardEvents() {
+  const svg = document.getElementById('pitch-svg');
+  let dragId = null;
+  let drawStart = null;
+
+  const onDown = (e) => {
+    if (e.cancelable) e.preventDefault();
+    const pt = svgPoint(e);
+    const target = e.target.closest('.player-token');
+    const b = state.board;
+    if (b.tool === 'select') {
+      if (target) {
+        dragId = target.dataset.id;
+        b.selectedId = dragId;
+        renderBoardQuick();
+      } else {
+        b.selectedId = null;
+        renderBoardQuick();
+      }
+    } else if (b.tool === 'arrow' || b.tool === 'dashed') {
+      drawStart = { x: pt.x, y: pt.y };
+    }
+  };
+  const onMove = (e) => {
+    if (e.cancelable) e.preventDefault();
+    const pt = svgPoint(e);
+    const b = state.board;
+    const frame = b.frames[b.frameIdx];
+    if (dragId) {
+      const p = frame.players.find(x => x.id === dragId);
+      if (p) {
+        p.x = Math.max(15, Math.min(PITCH_W - 15, pt.x));
+        p.y = Math.max(15, Math.min(PITCH_H - 15, pt.y));
+        b.dirty = true;
+        renderBoardQuick();
+      }
+    } else if (drawStart) {
+      document.getElementById('preview-arrow').innerHTML = renderArrow({ x1: drawStart.x, y1: drawStart.y, x2: pt.x, y2: pt.y, style: b.tool === 'dashed' ? 'dashed' : 'solid' });
+    }
+  };
+  const onUp = (e) => {
+    if (e.cancelable) e.preventDefault();
+    const b = state.board;
+    const frame = b.frames[b.frameIdx];
+    if (drawStart) {
+      const pt = svgPoint(e);
+      const dx = pt.x - drawStart.x, dy = pt.y - drawStart.y;
+      if (Math.hypot(dx, dy) > 20) {
+        frame.arrows.push({ x1: drawStart.x, y1: drawStart.y, x2: pt.x, y2: pt.y, style: b.tool === 'dashed' ? 'dashed' : 'solid' });
+        b.dirty = true;
+      }
+      document.getElementById('preview-arrow').innerHTML = '';
+      renderBoardQuick();
+    }
+    dragId = null;
+    drawStart = null;
+  };
+
+  svg.addEventListener('mousedown', onDown);
+  svg.addEventListener('mousemove', onMove);
+  svg.addEventListener('mouseup', onUp);
+  svg.addEventListener('mouseleave', onUp);
+  svg.addEventListener('touchstart', onDown, { passive: false });
+  svg.addEventListener('touchmove', onMove, { passive: false });
+  svg.addEventListener('touchend', onUp);
+}
+
+function renderBoardQuick() {
+  const b = state.board;
+  const frame = b.frames[b.frameIdx];
+  const playersLayer = document.getElementById('players-layer');
+  const arrowsLayer = document.getElementById('arrows-layer');
+  if (playersLayer) playersLayer.innerHTML = frame.players.map(renderPlayer).join('');
+  if (arrowsLayer) arrowsLayer.innerHTML = frame.arrows.map(renderArrow).join('');
+}
+
+function setBoardTool(t) {
+  state.board.tool = t;
+  renderBoard();
+}
+
+function changeFormation(f) {
+  state.board.formation = f;
+  state.board.frames = [{ players: buildPlayers(f), arrows: [] }];
+  state.board.frameIdx = 0;
+  state.board.dirty = true;
+  renderBoard();
+  toast(`フォーメーション: ${f}`);
+}
+
+function undoArrow() {
+  const f = state.board.frames[state.board.frameIdx];
+  if (f.arrows.length > 0) { f.arrows.pop(); state.board.dirty = true; renderBoardQuick(); }
+}
+
+function clearArrows() {
+  state.board.frames[state.board.frameIdx].arrows = [];
+  state.board.dirty = true;
+  renderBoardQuick();
+}
+
+function resetFormation() {
+  state.board.frames[state.board.frameIdx].players = buildPlayers(state.board.formation);
+  state.board.dirty = true;
+  renderBoardQuick();
+}
+
+function addFrame() {
+  const cur = state.board.frames[state.board.frameIdx];
+  // ディープコピー
+  const next = { players: cur.players.map(p => ({...p})), arrows: [] };
+  state.board.frames.push(next);
+  state.board.frameIdx = state.board.frames.length - 1;
+  state.board.dirty = true;
+  renderBoard();
+}
+
+function setFrame(i) {
+  state.board.frameIdx = i;
+  renderBoard();
+}
+
+function removeFrame() {
+  if (state.board.frames.length <= 1) return;
+  if (!confirm('このフレームを削除しますか？')) return;
+  state.board.frames.splice(state.board.frameIdx, 1);
+  if (state.board.frameIdx >= state.board.frames.length) state.board.frameIdx = state.board.frames.length - 1;
+  state.board.dirty = true;
+  renderBoard();
+}
+
+function playAnimation() {
+  const b = state.board;
+  if (b.frames.length < 2) { toast('フレームを2つ以上作ってから再生'); return; }
+  const duration = 900; // フレーム間補間
+  const startPlayers = [];
+  const startFrame = 0;
+  b.frameIdx = 0;
+  renderBoardQuick();
+
+  let i = 0;
+  const animateNext = () => {
+    if (i >= b.frames.length - 1) return;
+    const from = b.frames[i].players;
+    const to = b.frames[i + 1].players;
+    const start = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const interp = from.map((p, idx) => {
+        const q = to.find(x => x.id === p.id) || p;
+        return { ...p, x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t };
+      });
+      const pl = document.getElementById('players-layer');
+      if (pl) pl.innerHTML = interp.map(renderPlayer).join('');
+      // 矢印は遷移先フレーム側を表示
+      const al = document.getElementById('arrows-layer');
+      if (al) al.innerHTML = b.frames[i + 1].arrows.map(renderArrow).join('');
+      if (t < 1) requestAnimationFrame(step);
+      else { i++; setTimeout(animateNext, 300); }
+    };
+    requestAnimationFrame(step);
+  };
+  animateNext();
+}
+
+function savePlay() {
+  const b = state.board;
+  const defaultName = b.playingName || `プレー ${new Date().toLocaleString('ja-JP', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}`;
+  openModal(`
+    <div class="mb-3">
+      <div class="font-bold text-lg mb-2">プレーを保存</div>
+      <input id="play-name-input" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" value="${escapeHtml(defaultName)}" />
+    </div>
+    <div class="flex gap-2">
+      <button onclick="closeModal()" class="flex-1 border border-gray-300 py-2.5 rounded-lg font-bold text-sm">キャンセル</button>
+      <button onclick="confirmSavePlay()" class="flex-1 btn-primary py-2.5 rounded-lg font-bold text-sm">保存</button>
+    </div>
+  `);
+  setTimeout(() => { const i = document.getElementById('play-name-input'); if (i) i.focus(); }, 50);
+}
+
+function confirmSavePlay() {
+  const name = document.getElementById('play-name-input').value.trim();
+  if (!name) { toast('名前を入力してください'); return; }
+  const b = state.board;
+  const play = {
+    id: b.playingId || 'p-' + Date.now(),
+    name,
+    formation: b.formation,
+    frames: JSON.parse(JSON.stringify(b.frames)),
+    updatedAt: Date.now(),
+  };
+  const idx = DATA.plays.findIndex(p => p.id === play.id);
+  if (idx >= 0) DATA.plays[idx] = play; else DATA.plays.push(play);
+  saveData();
+  b.playingId = play.id;
+  b.playingName = play.name;
+  b.dirty = false;
+  closeModal();
+  toast('保存しました');
+  renderBoard();
+}
+
+function openPlaysList() {
+  const plays = DATA.plays.slice().sort((a, b) => b.updatedAt - a.updatedAt);
+  openModal(`
+    <div class="mb-3 font-bold text-lg">保存されたプレー</div>
+    ${plays.length === 0 ? '<div class="text-sm text-gray-500 py-6 text-center">保存されたプレーはありません</div>' : `
+      <div class="space-y-2 mb-3 max-h-96 overflow-y-auto">
+        ${plays.map(p => `
+          <div class="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+            <div class="min-w-0 flex-1">
+              <div class="font-bold text-sm truncate">${escapeHtml(p.name)}</div>
+              <div class="text-xs text-gray-500 mt-0.5">${p.formation} / ${p.frames.length}フレーム / ${new Date(p.updatedAt).toLocaleDateString('ja-JP')}</div>
+            </div>
+            <div class="flex gap-1 ml-2">
+              <button onclick="loadPlay('${p.id}')" class="btn-primary text-xs px-3 py-1.5 rounded font-bold">開く</button>
+              <button onclick="deletePlay('${p.id}')" class="text-xs text-red-500 px-2">削除</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `}
+    <button onclick="closeModal()" class="w-full border border-gray-300 py-2.5 rounded-lg font-bold text-sm">閉じる</button>
+  `);
+}
+
+function loadPlay(id) {
+  const p = DATA.plays.find(x => x.id === id);
+  if (!p) return;
+  state.board = {
+    frames: JSON.parse(JSON.stringify(p.frames)),
+    frameIdx: 0,
+    tool: 'select',
+    selectedId: null,
+    drawing: null,
+    formation: p.formation,
+    playingName: p.name,
+    playingId: p.id,
+    dirty: false,
+  };
+  closeModal();
+  renderBoard();
+  toast(`「${p.name}」を読み込みました`);
+}
+
+function deletePlay(id) {
+  if (!confirm('このプレーを削除しますか？')) return;
+  DATA.plays = DATA.plays.filter(x => x.id !== id);
+  saveData();
+  openPlaysList();
+}
+
+function exportBoardPNG() {
+  const svg = document.getElementById('pitch-svg');
+  const xml = new XMLSerializer().serializeToString(svg);
+  const svg64 = btoa(unescape(encodeURIComponent(xml)));
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = PITCH_W * 2;
+    canvas.height = PITCH_H * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tactics-${Date.now()}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('画像を書き出しました');
+    }, 'image/png');
+  };
+  img.src = 'data:image/svg+xml;base64,' + svg64;
+}
+
+// =============================================================
+// 継続管理
+// =============================================================
+function renderMotivation() {
+  const w = weekStats();
+  // 過去3週間のログを日別集計
+  const weeks = [];
+  for (let wi = 2; wi >= 0; wi--) {
+    const base = new Date();
+    base.setDate(base.getDate() - (wi * 7 + 6));
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(base); d.setDate(base.getDate() + i);
+      const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      days.push({ date: ds, done: DATA.practiceLog.some(p => p.date === ds) });
+    }
+    const label = wi === 0 ? '今週' : wi === 1 ? '先週' : '先々週';
+    weeks.push({ label, days });
+  }
+
+  const last30 = DATA.diagnoses.filter(d => d.createdAt > Date.now() - 30*24*60*60*1000);
+  const avgScore = last30.length > 0 ? Math.round(last30.reduce((s, d) => s + d.overall, 0) / last30.length) : null;
+
+  main.innerHTML = `
+    <div class="px-5 py-4 fade-in">
+      <div class="gradient-hero text-white rounded-2xl p-5 mb-4">
+        <div class="text-xs opacity-80 tracking-wider">CURRENT STREAK</div>
+        <div class="flex items-baseline gap-2 mt-1">
+          <span class="text-5xl font-black">${DATA.streak}</span>
+          <span class="text-lg">日連続 🔥</span>
+        </div>
+        <div class="text-xs mt-2 opacity-90">
+          ${DATA.streak === 0 ? '今日から始めよう。ホームのメニューを1つタップすればカウントスタート。' : `このペースなら月末までに+${Math.min(30, DATA.streak + 25)}回の計算です`}
+        </div>
+      </div>
+
+      <h2 class="font-bold text-gray-800 mb-2">練習ログ</h2>
+      <div class="card p-4 mb-4">
+        ${weeks.map(wk => `
+          <div class="flex items-center gap-3 mb-2 last:mb-0">
+            <div class="w-14 text-xs text-gray-500">${wk.label}</div>
+            <div class="flex gap-1 flex-1">
+              ${wk.days.map(d => `<div class="flex-1 h-6 rounded ${d.done ? 'bg-[var(--primary)]' : 'bg-gray-100'}" title="${d.date}"></div>`).join('')}
+            </div>
+            <div class="text-xs font-bold">${wk.days.filter(d=>d.done).length}回</div>
+          </div>
+        `).join('')}
+        <div class="flex justify-between text-[10px] text-gray-400 mt-2 pl-[68px]">
+          <span>7日前</span><span></span><span></span><span></span><span></span><span></span><span>今日</span>
+        </div>
+      </div>
+
+      <h2 class="font-bold text-gray-800 mb-2">AI分析</h2>
+      <div class="card p-4 mb-4 space-y-2">
+        ${DATA.practiceLog.length === 0 ? `<div class="text-sm text-gray-500">練習ログが溜まると、ここに傾向分析が表示されます。</div>` : `
+          <div class="flex items-start gap-2 text-sm"><span class="text-lg">📈</span><span>過去7日の練習回数は<b>${w.trained}回</b>。目標${w.goal}回に対して${Math.round(w.trained/w.goal*100)}%達成。</span></div>
+          ${avgScore !== null ? `<div class="flex items-start gap-2 text-sm"><span class="text-lg">⚽</span><span>直近30日の診断平均スコアは<b>${avgScore}点</b>。${avgScore >= 80 ? 'プロ基準に近い水準です。' : avgScore >= 60 ? '基礎ができています。次は一段階上を。' : '改善余地があります。軸足・体幹を重点的に。'}</span></div>` : ''}
+          <div class="flex items-start gap-2 text-sm"><span class="text-lg">🎯</span><span>${DATA.streak >= 7 ? '週間ベースで継続できています。次は30日連続を狙いましょう。' : '週3回以上の練習が習慣化の分岐点です。'}</span></div>
+        `}
+      </div>
+
+      <h2 class="font-bold text-gray-800 mb-2">達成バッジ</h2>
+      <div class="grid grid-cols-4 gap-2 mb-4">
+        ${renderBadges()}
+      </div>
+
+      <div class="card p-4 border-l-4 border-[var(--accent)]">
+        <div class="text-xs font-bold text-gray-700 mb-1">🧠 次の声掛けタイミング（AI予測）</div>
+        <div class="text-sm text-gray-700 leading-relaxed">
+          ${getNextNudge()}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderBadges() {
+  const badges = [
+    { e: '🔥', l: '7日連続', ok: DATA.streak >= 7 },
+    { e: '⚽', l: '初診断', ok: DATA.diagnoses.length >= 1 },
+    { e: '💬', l: '戦術10回', ok: DATA.chatHistory.filter(m=>m.role==='user').length >= 10 },
+    { e: '📋', l: 'プレー保存', ok: DATA.plays.length >= 1 },
+    { e: '🏆', l: '30日連続', ok: DATA.streak >= 30 },
+    { e: '💯', l: '診断90点', ok: DATA.diagnoses.some(d => d.overall >= 90) },
+    { e: '📅', l: '3ヶ月継続', ok: DATA.streak >= 90 },
+    { e: '👑', l: 'マスター', ok: DATA.streak >= 180 },
+  ];
+  return badges.map(b => `
+    <div class="card p-3 flex flex-col items-center ${b.ok ? '' : 'opacity-30'}">
+      <div class="text-2xl">${b.e}</div>
+      <div class="text-[10px] text-gray-600 mt-1 text-center">${b.l}</div>
+    </div>
+  `).join('');
+}
+
+function getNextNudge() {
+  const hours = new Date().getHours();
+  if (DATA.streak === 0) return '今日、ホーム画面からメニューを1つ実行してみてください。記録が始まります。';
+  if (hours < 12) return '朝練推奨タイム。15分でもインサイドキックを5本やると継続率が上がります。';
+  if (hours < 18) return '夕方は体温がピーク。パフォーマンスが出やすい時間帯です。';
+  return '夜はフォームのチェックや戦術相談で軽く。身体の負担が少ない内容でOK。';
+}
+
+// =============================================================
+// 設定
+// =============================================================
+function openSettings() {
+  if (!DATA) { openProfileSwitcher(); return; }
+  const active = getActiveProfile();
+  openModal(`
+    <div class="font-bold text-lg mb-3">設定</div>
+    ${active ? `
+      <div class="card p-3 mb-3 flex items-center gap-3 bg-orange-50">
+        <div class="w-11 h-11 rounded-full flex items-center justify-center text-2xl bg-white">${active.avatar}</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-bold text-sm truncate">${escapeHtml(active.name)}</div>
+          <div class="text-[11px] text-gray-500">プロフィール（${PROFILES.length}人中）</div>
+        </div>
+        <button onclick="closeModal(); openProfileSwitcher();" class="btn-primary text-xs px-3 py-1.5 rounded font-bold">切替</button>
+      </div>
+    ` : ''}
+    <div class="space-y-3">
+      <div>
+        <label class="text-xs text-gray-500 block mb-1">ニックネーム</label>
+        <input id="set-name" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" value="${escapeHtml(DATA.user.name)}" />
+      </div>
+      <div>
+        <label class="text-xs text-gray-500 block mb-1">チーム名</label>
+        <input id="set-team" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" value="${escapeHtml(DATA.settings.team || '')}" />
+      </div>
+      <div>
+        <label class="text-xs text-gray-500 block mb-1">ポジション</label>
+        <select id="set-pos" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          ${['GK','DF','MF','FW'].map(p => `<option ${p===DATA.settings.position?'selected':''}>${p}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="mt-4 border-t pt-4">
+      <div class="font-bold text-sm mb-2">データ管理</div>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="exportData()" class="btn-primary py-2.5 rounded-lg text-xs font-bold">📤 エクスポート</button>
+        <button onclick="importData()" class="border border-gray-300 py-2.5 rounded-lg text-xs font-bold">📥 インポート</button>
+      </div>
+      <button onclick="resetAll()" class="w-full mt-2 text-xs text-red-500 py-2">全データをリセット</button>
+    </div>
+    <div class="mt-4 border-t pt-4 text-[11px] text-gray-500 leading-relaxed">
+      本アプリはローカルに全データを保存します。アプリを削除／ブラウザデータを消去するとデータも消えるので、定期的にエクスポートを推奨。<br><br>
+      バージョン: 1.0.0<br>
+      © AI Coach for Football (Prototype)
+    </div>
+    <div class="mt-3 flex gap-2">
+      <button onclick="closeModal()" class="flex-1 border border-gray-300 py-2.5 rounded-lg font-bold text-sm">閉じる</button>
+      <button onclick="saveSettings()" class="flex-1 btn-primary py-2.5 rounded-lg font-bold text-sm">保存</button>
+    </div>
+  `);
+}
+
+function saveSettings() {
+  const newName = document.getElementById('set-name').value.trim() || 'あなた';
+  DATA.user.name = newName;
+  DATA.settings.team = document.getElementById('set-team').value.trim();
+  DATA.settings.position = document.getElementById('set-pos').value;
+  saveData();
+  // プロフィール側にも同期
+  const active = getActiveProfile();
+  if (active) { active.name = newName; saveProfiles(); }
+  closeModal();
+  toast('設定を保存しました');
+  render();
+}
+
+function exportData() {
+  const blob = new Blob([JSON.stringify(DATA, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ai-coach-backup-${todayStr()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('バックアップを書き出しました');
+}
+
+function importData() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json';
+  input.onchange = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const obj = JSON.parse(reader.result);
+        if (!obj.user || !Array.isArray(obj.practiceLog)) throw new Error('invalid');
+        if (!confirm('現在のデータを上書きします。続行しますか？')) return;
+        DATA = Object.assign(defaultData(), obj);
+        saveData();
+        closeModal();
+        toast('インポートしました');
+        render();
+      } catch (e) { alert('ファイルを読み込めませんでした'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function resetAll() {
+  const active = getActiveProfile();
+  if (!active) return;
+  if (!confirm(`「${active.name}」の全記録を削除します。この操作は取り消せません。`)) return;
+  if (!confirm('本当によろしいですか？')) return;
+  try { localStorage.removeItem(DATA_PREFIX + active.id); } catch(e){}
+  DATA = defaultData();
+  DATA.user.name = active.name;
+  saveData();
+  closeModal();
+  toast('リセットしました');
+  render();
+}
+
+// =============================================================
+// PWA Manifest 埋め込み
+// =============================================================
+(function setupManifest() {
+  const iconSVG = "data:image/svg+xml;utf8," + encodeURIComponent(
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='40' fill='#ea580c'/><text x='96' y='128' font-size='110' text-anchor='middle' font-family='Arial'>⚽</text></svg>"
+  );
+  const manifest = {
+    name: 'AI Coach for Football',
+    short_name: 'AI Coach',
+    description: 'サッカーAIパーソナル・コーチアプリ',
+    start_url: '.',
+    display: 'standalone',
+    background_color: '#ea580c',
+    theme_color: '#ea580c',
+    orientation: 'portrait',
+    icons: [
+      { src: iconSVG, sizes: '192x192', type: 'image/svg+xml' },
+      { src: iconSVG, sizes: '512x512', type: 'image/svg+xml' },
+    ],
+  };
+  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.getElementById('manifest-link');
+  if (link) link.href = url;
+})();
+
+// =============================================================
+// プロフィール選択・作成・切替 UI
+// =============================================================
+function renderProfileGate() {
+  // プロフィールが1つもない場合の作成画面
+  const hasProfiles = PROFILES.length > 0;
+  main.innerHTML = `
+    <div class="min-h-[calc(100vh-180px)] flex flex-col items-center justify-center px-6 py-10 fade-in">
+      <div class="text-5xl mb-3">⚽</div>
+      <h2 class="text-xl font-black mb-1">${hasProfiles ? 'プロフィールを選択' : 'はじめまして！'}</h2>
+      <p class="text-sm text-gray-600 text-center mb-6">
+        ${hasProfiles ? 'この端末を使う人を選んでください。' : 'まず「誰が使うか」を登録します。<br>同じ端末を家族・チームメイトと分けて使えます。'}
+      </p>
+
+      ${hasProfiles ? `
+        <div class="w-full max-w-xs space-y-2 mb-5">
+          ${PROFILES.sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0)).map(p => `
+            <button onclick="selectProfile('${p.id}')" class="w-full card p-3 flex items-center gap-3 active:scale-[0.98] transition">
+              <div class="w-11 h-11 rounded-full flex items-center justify-center text-2xl" style="background:#fff0e0">${p.avatar}</div>
+              <div class="flex-1 text-left min-w-0">
+                <div class="font-bold text-sm truncate">${escapeHtml(p.name)}</div>
+                <div class="text-[11px] text-gray-500">最終ログイン：${relativeDate(p.lastUsed)}</div>
+              </div>
+              <svg width="18" height="18" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l8 8-8 8"/></svg>
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      <button onclick="openCreateProfile()" class="btn-primary px-6 py-3 rounded-full font-bold text-sm shadow-lg">＋ 新しいプロフィールを追加</button>
+
+      <p class="text-[11px] text-gray-400 mt-6 text-center leading-relaxed max-w-xs">
+        データは端末内に保存されます。機種変更時は設定からバックアップを書き出してください。
+      </p>
+    </div>
+  `;
+}
+
+function relativeDate(ts) {
+  if (!ts) return '—';
+  const d = Math.floor((Date.now() - ts) / 1000);
+  if (d < 60) return 'たった今';
+  if (d < 3600) return Math.floor(d/60) + '分前';
+  if (d < 86400) return Math.floor(d/3600) + '時間前';
+  if (d < 86400 * 30) return Math.floor(d/86400) + '日前';
+  return new Date(ts).toLocaleDateString('ja-JP');
+}
+
+function openCreateProfile() {
+  let selectedAvatar = '⚽';
+  openModal(`
+    <div class="font-bold text-lg mb-3">プロフィール作成</div>
+    <div class="mb-4">
+      <label class="text-xs text-gray-500 block mb-1">ニックネーム</label>
+      <input id="cp-name" type="text" maxlength="20" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="例：たけし" />
+    </div>
+    <div class="mb-4">
+      <label class="text-xs text-gray-500 block mb-2">アバター</label>
+      <div id="cp-avatar-grid" class="grid grid-cols-8 gap-2">
+        ${AVATAR_OPTIONS.map((a, i) => `
+          <button type="button" data-avatar="${a}" class="cp-av aspect-square rounded-lg text-2xl flex items-center justify-center ${i === 0 ? 'bg-[var(--primary)] text-white' : 'bg-gray-100'}">${a}</button>
+        `).join('')}
+      </div>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="closeModal()" class="flex-1 border border-gray-300 py-2.5 rounded-lg font-bold text-sm">キャンセル</button>
+      <button id="cp-confirm" class="flex-1 btn-primary py-2.5 rounded-lg font-bold text-sm">作成</button>
+    </div>
+  `);
+  // アバター選択
+  document.querySelectorAll('.cp-av').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.cp-av').forEach(b => { b.classList.remove('bg-[var(--primary)]', 'text-white'); b.classList.add('bg-gray-100'); });
+      btn.classList.add('bg-[var(--primary)]', 'text-white');
+      btn.classList.remove('bg-gray-100');
+      selectedAvatar = btn.dataset.avatar;
+    });
+  });
+  document.getElementById('cp-confirm').addEventListener('click', () => {
+    const name = document.getElementById('cp-name').value.trim();
+    if (!name) { toast('ニックネームを入力してください'); return; }
+    const prof = createProfile(name, selectedAvatar);
+    activateProfile(prof.id);
+    closeModal();
+    toast(`ようこそ、${prof.name}さん`);
+    render();
+  });
+  setTimeout(() => document.getElementById('cp-name').focus(), 50);
+}
+
+function selectProfile(id) {
+  activateProfile(id);
+  render();
+  toast(`${getActiveProfile().name}さんに切り替えました`);
+}
+
+function openProfileSwitcher() {
+  const active = getActiveProfile();
+  const list = PROFILES.slice().sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0));
+  openModal(`
+    <div class="font-bold text-lg mb-3">プロフィール切替</div>
+    <div class="space-y-2 mb-4 max-h-80 overflow-y-auto">
+      ${list.map(p => `
+        <div class="flex items-center gap-3 border rounded-lg p-2 ${p.id === (active && active.id) ? 'border-[var(--primary)] bg-orange-50' : 'border-gray-200'}">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center text-xl bg-orange-50">${p.avatar}</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold text-sm truncate">${escapeHtml(p.name)} ${p.id === (active && active.id) ? '<span class="text-[10px] chip ml-1">使用中</span>' : ''}</div>
+            <div class="text-[11px] text-gray-500">最終：${relativeDate(p.lastUsed)}</div>
+          </div>
+          ${p.id !== (active && active.id) ? `<button onclick="switchToProfile('${p.id}')" class="btn-primary text-xs px-3 py-1.5 rounded font-bold">切替</button>` : ''}
+          <button onclick="confirmDeleteProfile('${p.id}')" class="text-xs text-red-500 px-2">削除</button>
+        </div>
+      `).join('')}
+    </div>
+    <button onclick="closeModal(); openCreateProfile();" class="w-full btn-primary py-2.5 rounded-lg font-bold text-sm mb-2">＋ 新しいプロフィールを追加</button>
+    <button onclick="closeModal()" class="w-full border border-gray-300 py-2.5 rounded-lg font-bold text-sm">閉じる</button>
+  `);
+}
+
+function switchToProfile(id) {
+  activateProfile(id);
+  closeModal();
+  toast(`${getActiveProfile().name}さんに切り替えました`);
+  render();
+}
+
+function confirmDeleteProfile(id) {
+  const p = PROFILES.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm(`「${p.name}」のプロフィールと記録を完全に削除します。よろしいですか？`)) return;
+  if (!confirm('この操作は取り消せません。本当によろしいですか？')) return;
+  deleteProfile(id);
+  if (!ACTIVE_PROFILE_ID) {
+    DATA = null;
+    closeModal();
+    render();
+    return;
+  }
+  DATA = loadData();
+  openProfileSwitcher();
+  toast('削除しました');
+}
+
+// =============================================================
+// 初期化
+// =============================================================
+loadProfiles();
+migrateLegacy();
+
+// アクティブプロフィールが存在しない／削除済みの場合はクリア
+if (ACTIVE_PROFILE_ID && !PROFILES.find(p => p.id === ACTIVE_PROFILE_ID)) {
+  ACTIVE_PROFILE_ID = null;
+  saveProfiles();
+}
+
+if (ACTIVE_PROFILE_ID) {
+  DATA = loadData();
+  DATA.streak = computeStreak();
+  saveData();
+}
+
+document.querySelectorAll('.tab-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    if (!ACTIVE_PROFILE_ID) { toast('まずプロフィールを選択してください'); return; }
+    switchTab(b.dataset.tab);
+  });
+});
+
+function showInitialWelcome() {
+  if (!DATA) return;
+  if (DATA.practiceLog.length === 0 && DATA.diagnoses.length === 0 && DATA.plays.length === 0) {
+    setTimeout(() => {
+      openModal(`
+        <div class="text-center">
+          <div class="text-4xl mb-2">⚽</div>
+          <div class="font-bold text-xl mb-1">AI Coach for Football へようこそ</div>
+          <div class="text-sm text-gray-600 mb-4">あなた専属のサッカーAIコーチです。</div>
+        </div>
+        <ul class="text-sm text-gray-700 space-y-2 mb-5">
+          <li class="flex gap-2"><span>📹</span><span><b>診断</b>タブ：カメラでフォームを自動採点</span></li>
+          <li class="flex gap-2"><span>💬</span><span><b>戦術</b>タブ：試合の悩みをチャットで相談</span></li>
+          <li class="flex gap-2"><span>📋</span><span><b>ボード</b>タブ：フォーメーション＆プレー設計</span></li>
+          <li class="flex gap-2"><span>🔥</span><span><b>継続</b>タブ：練習ログ＆AIからの声掛け</span></li>
+        </ul>
+        <div class="text-[11px] text-gray-500 mb-4 leading-relaxed">
+          全データは端末内に保存されます（サーバー送信なし）。スマホなら「ホーム画面に追加」で本物のアプリのように使えます。
+        </div>
+        <button onclick="closeModal()" class="w-full btn-primary py-3 rounded-lg font-bold">はじめる</button>
+      `);
+    }, 400);
+  }
+}
+
+render();
+if (ACTIVE_PROFILE_ID) showInitialWelcome();
+</script>
+</body>
+</html>
