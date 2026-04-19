@@ -144,7 +144,8 @@ const defaultData = () => ({
     { role: 'ai', text: 'こんにちは！今日は何について相談したい？「次の試合、相手が格上なんだけどどう守ればいい？」のように具体的に聞いてみてください。' }
   ],
   plays: [],                // [{ id, name, formation, frames:[...], updatedAt }]
-  settings: { theme: 'light', position: 'MF', team: 'マイチーム' },
+  settings: { theme: 'light', position: 'MF', team: 'マイチーム', ageGroup: '大人（社会人・草サッカー）', level: '初級〜中級' },
+  ai: { provider: 'gemini', apiKey: '', model: 'gemini-2.0-flash' },
 });
 
 function loadProfiles() {
@@ -742,16 +743,23 @@ function analyzeFrames() {
 // 戦術チャット
 // =============================================================
 const chatSuggestions = [
-  '格上相手にどう守ればいい？',
-  '4-4-2の弱点の突き方を教えて',
-  'サイドバックの守備のコツは？',
-  'セットプレーでゴールするには？',
+  '次の試合で格上相手にどう守る？',
+  '私のポジションで今週やるべき練習3つ',
+  '4-3-3相手に4-4-2で勝つには？',
+  'ボールが足につかない。改善法を段階的に',
+  'セットプレーで得点する具体策',
+  'トラップが浮く原因を動きから分析して',
 ];
 
 function renderChat() {
+  const aiOn = DATA.ai && DATA.ai.apiKey;
+  const banner = aiOn
+    ? `<div class="flex items-center justify-between bg-green-50 border border-green-200 text-green-800 text-[11px] px-3 py-2 rounded-lg mb-2"><span>🟢 AI接続中：${escapeHtml(DATA.ai.model||'gemini-2.0-flash')} / ${escapeHtml(DATA.settings.position||'-')}・${escapeHtml(DATA.settings.team||'-')}の情報を反映</span><button onclick="openSettings()" class="underline">変更</button></div>`
+    : `<div class="flex items-center justify-between bg-orange-50 border border-orange-200 text-orange-800 text-[11px] px-3 py-2 rounded-lg mb-2"><span>⚠️ 簡易回答モード。精度を上げるにはAIキー登録を。</span><button onclick="openSettings()" class="underline font-bold">設定へ</button></div>`;
   main.innerHTML = `
     <div class="flex flex-col" style="height: calc(100vh - 210px);">
       <div id="chat-scroll" class="flex-1 overflow-y-auto px-4 py-3 scroll-hide">
+        ${banner}
         <div class="flex justify-end mb-2"><button onclick="clearChat()" class="text-[11px] text-gray-400">履歴クリア</button></div>
         ${DATA.chatHistory.map(m => renderMessage(m)).join('')}
         <div id="typing"></div>
@@ -794,36 +802,163 @@ function clearChat() {
   render();
 }
 
-function sendChat(text) {
+async function sendChat(text) {
   DATA.chatHistory.push({ role: 'user', text });
   saveData();
   renderChat();
+  // 「考え中」インジケータを挿入
   setTimeout(() => {
-    const typing = document.getElementById('typing');
-    if (typing) typing.innerHTML = `<div class="flex mb-3 fade-in items-end gap-2"><div class="w-7 h-7 rounded-full bg-[var(--primary)] flex items-center justify-center text-white text-xs shrink-0">AI</div><div class="msg-ai px-4 py-2.5 text-sm typing">考え中</div></div>`;
-    scrollChatBottom();
-  }, 150);
-  setTimeout(() => {
-    const reply = generateTacticalReply(text);
-    DATA.chatHistory.push({ role: 'ai', text: reply });
-    saveData();
-    renderChat();
-  }, 1300);
+    const scroll = document.getElementById('chat-scroll');
+    if (scroll) {
+      const thinking = document.createElement('div');
+      thinking.id = 'ai-thinking';
+      thinking.innerHTML = `<div class="flex mb-3 fade-in items-end gap-2"><div class="w-7 h-7 rounded-full bg-[var(--primary)] flex items-center justify-center text-white text-xs shrink-0">AI</div><div class="msg-ai px-4 py-2.5 text-sm typing">考え中…</div></div>`;
+      scroll.appendChild(thinking);
+      scrollChatBottom();
+    }
+  }, 100);
+
+  let reply;
+  try {
+    reply = await generateTacticalReply(text);
+  } catch (e) {
+    console.error(e);
+    reply = `AIの呼び出しでエラーが発生しました。<br><br><b>原因の可能性:</b><br>・APIキーが未設定／無効<br>・無料枠の上限到達<br>・ネットワーク接続エラー<br><br>設定画面でAPIキーを確認してください。<br><br><small>エラー詳細: ${escapeHtml(e.message || String(e))}</small>`;
+  }
+  // 考え中を消す
+  const th = document.getElementById('ai-thinking');
+  if (th) th.remove();
+
+  DATA.chatHistory.push({ role: 'ai', text: reply });
+  saveData();
+  renderChat();
 }
 
-function generateTacticalReply(q) {
+// 実AI呼び出し（Gemini API優先、未設定ならルールベース）
+async function generateTacticalReply(q) {
+  const ai = DATA.ai || {};
+  if (ai.provider === 'gemini' && ai.apiKey) {
+    return await callGeminiAPI(q);
+  }
+  // APIキー未設定時はルールベース＋設定誘導
+  const base = generateRuleBasedReply(q);
+  return base + `<br><br><div style="background:#fff7ed;border-left:3px solid #ea580c;padding:8px 10px;border-radius:6px;font-size:12px;color:#9a3412;">💡 <b>より精度の高い回答を得るには</b>：設定画面 → AI設定から無料のGemini APIキーを登録してください。チーム情報や練習履歴を踏まえたコーチングに変わります。</div>`;
+}
+
+// ユーザー情報・記録を踏まえたシステムプロンプトを生成
+function buildSystemPrompt() {
+  const u = DATA.user || {};
+  const s = DATA.settings || {};
+  const recentPractice = (DATA.practiceLog || []).slice(-5).map(p =>
+    `${p.date}: ${(p.menus || []).map(m => m.name || m).join('、')}`
+  ).join(' / ') || 'なし';
+  const recentDiag = (DATA.diagnoses || []).slice(-3).map(d =>
+    `${d.date}: スコア${(d.scores||[]).map(x => x.value).join('/')}`
+  ).join(' / ') || 'なし';
+  const savedPlays = (DATA.plays || []).slice(-3).map(p => `${p.name}(${p.formation||''})`).join('、') || 'なし';
+
+  return `あなたは経験豊富なプロのサッカーコーチです。日本の社会人・アマチュア選手とそのご家族を対象に、わかりやすく・実用的で・具体的な戦術アドバイスを提供してください。
+
+# 回答の鉄則
+1. **具体的に**: 「ボランチの前を埋める」ではなく「○○が××の位置で△△する」まで落とす
+2. **実行可能**: アマチュアでも練習で再現できる指示のみ
+3. **簡潔**: モバイル画面なので200〜350文字以内。箇条書きを多用
+4. **根拠**: 「なぜそうするか」を1行で添える
+5. **質問の意図を正確に読む**: 曖昧な点があれば勝手に推測せず、最後に1つだけ聞き返す
+6. **HTML形式**: 改行は <br>、強調は <b>〜</b>、箇条書きは先頭に「・」を使う（<ul>は使わない）
+7. **絶対に使わない語**: 「頑張りましょう」「意識しましょう」「気をつけましょう」のような精神論・根性論
+
+# 選手情報
+- 名前: ${u.name || '不明'}
+- ポジション: ${s.position || '不明'}
+- 所属チーム: ${s.team || '不明'}
+- 年代/カテゴリ: ${s.ageGroup || '大人（社会人）'}
+- レベル: ${s.level || '初級〜中級'}
+
+# 最近の活動記録
+- 直近の練習: ${recentPractice}
+- フォーム診断履歴: ${recentDiag}
+- 保存済み戦術プレー: ${savedPlays}
+- 練習継続日数: ${DATA.streak || 0}日
+
+これらの情報を適宜引用し、この選手専属のコーチとして回答してください。ポジションに関係ない話題は一般的なアドバイスでOKですが、必ず選手のポジションや記録に絡めた実用的な一言を最後に添えてください。`;
+}
+
+async function callGeminiAPI(userText) {
+  const ai = DATA.ai;
+  const model = ai.model || 'gemini-2.0-flash';
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(ai.apiKey)}`;
+
+  // 直近の会話履歴（最大10往復）をGemini形式に変換
+  const history = (DATA.chatHistory || [])
+    .slice(-20)
+    .filter(m => m.text && (m.role === 'user' || m.role === 'ai'));
+  // 最後のメッセージ（今回のユーザー質問）は重複する可能性があるので除外
+  // chatHistoryは既にこの質問を含んでpushされているので、最後の1件を除く
+  const historyForApi = history.slice(0, -1).map(m => ({
+    role: m.role === 'ai' ? 'model' : 'user',
+    parts: [{ text: stripHtml(m.text) }]
+  }));
+  historyForApi.push({ role: 'user', parts: [{ text: userText }] });
+
+  const body = {
+    systemInstruction: { parts: [{ text: buildSystemPrompt() }] },
+    contents: historyForApi,
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 800,
+      topP: 0.95,
+    },
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+    ]
+  };
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    let errJson = {};
+    try { errJson = JSON.parse(errText); } catch (e) {}
+    const msg = (errJson.error && errJson.error.message) || errText || ('HTTP ' + res.status);
+    throw new Error(msg);
+  }
+
+  const data = await res.json();
+  const candidate = (data.candidates || [])[0];
+  if (!candidate) throw new Error('回答が空でした。APIキーやクォータを確認してください。');
+  const parts = (candidate.content && candidate.content.parts) || [];
+  const text = parts.map(p => p.text || '').join('').trim();
+  if (!text) throw new Error('空の回答（安全フィルタでブロックされた可能性）');
+  // Geminiが返した改行を <br> に変換（既にHTMLが入っていればそのまま）
+  return text.replace(/\n/g, '<br>');
+}
+
+function stripHtml(s) {
+  return String(s || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
+}
+
+// ルールベース（APIキー未設定時のフォールバック）
+function generateRuleBasedReply(q) {
   const lower = q.toLowerCase();
   if (/格上|強い相手|強豪/.test(q)) {
-    return `格上相手では<b>守備の構造</b>が勝負を分けます。<br><br><b>1. 自陣の守備ブロックをコンパクトに</b>：最終ラインとボランチの間を10m以下に保ち、縦パスのコースを消す。<br><b>2. 二度追いせずチームで規制</b>：1人目のプレスで相手の体の向きを限定し、2人目が次のパスコースを消す。<br><b>3. 奪ったら最短でゴールへ</b>：ポゼッションを狙わず縦に速く、2〜3本でフィニッシュまで。<br><br>前チームの試合ログから、失点は右サイドのクロスが多いので、対面SHへの早めのプレスバックを指示しましょう。`;
+    return `格上相手では<b>守備の構造</b>が勝負を分けます。<br><br><b>1. 自陣の守備ブロックをコンパクトに</b>：最終ラインとボランチの間を10m以下に保ち、縦パスのコースを消す。<br><b>2. 二度追いせずチームで規制</b>：1人目のプレスで相手の体の向きを限定し、2人目が次のパスコースを消す。<br><b>3. 奪ったら最短でゴールへ</b>：ポゼッションを狙わず縦に速く、2〜3本でフィニッシュまで。`;
   }
   if (/4-4-2|442/.test(lower) || /442/.test(q)) {
-    return `4-4-2の弱点は<b>ライン間のスペース</b>とボランチ脇です。<br><br>・2トップの1人が相手ボランチの前、もう1人が裏へ走り、SBを困らせる<br>・ライン間に顔を出すトップ下的な動きを1枚作る<br>・サイドチェンジで逆サイドのSHを置き去りに<br><br>戦術ボードで具体的な配置を組み立てると共有しやすいです。`;
+    return `4-4-2の弱点は<b>ライン間のスペース</b>とボランチ脇です。<br><br>・2トップの1人が相手ボランチの前、もう1人が裏へ走り、SBを困らせる<br>・ライン間に顔を出すトップ下的な動きを1枚作る<br>・サイドチェンジで逆サイドのSHを置き去りに`;
   }
   if (/サイドバック|SB|サイド守備/.test(q)) {
-    return `SB守備の原則は<b>対面を縦に行かせない</b>こと。<br><br>・半身で構え内側の足を前に出して縦を切る<br>・距離は1.5〜2m、詰めすぎない<br>・クロスを上げさせない角度で遅らせ、味方のプレスバックを待つ<br>・裏のスペースはCBと連動でカバー<br><br>最初の一歩で<b>相手の利き足</b>を見極めるのが最重要。`;
+    return `SB守備の原則は<b>対面を縦に行かせない</b>こと。<br><br>・半身で構え内側の足を前に出して縦を切る<br>・距離は1.5〜2m、詰めすぎない<br>・クロスを上げさせない角度で遅らせ、味方のプレスバックを待つ<br>・裏のスペースはCBと連動でカバー`;
   }
   if (/セットプレー|CK|FK|コーナー/.test(q)) {
-    return `アマチュアがセットプレーで得点するコツは<b>シンプル＆1つに絞る</b>こと。<br><br><b>コーナー：</b>ニア走り込み＋ファー待ち伏せの2択に絞り、ショートのフリで揺さぶる。こぼれ球狙いをペナルティアーク付近に必ず1枚。<br><b>FK直接：</b>22m以内で中央寄りなら狙う価値あり。壁の端を抜くシュートを毎日5本。<br><br>戦術ボードで配置を保存して共有すると精度が上がります。`;
+    return `アマチュアがセットプレーで得点するコツは<b>シンプル＆1つに絞る</b>こと。<br><br><b>コーナー：</b>ニア走り込み＋ファー待ち伏せの2択に絞り、ショートのフリで揺さぶる。<br><b>FK直接：</b>22m以内で中央寄りなら狙う価値あり。壁の端を抜くシュートを毎日5本。`;
   }
   if (/守備|守り|ディフェンス/.test(q)) {
     return `チーム守備の原則は<b>ボールを追うのではなくコースを切る</b>。<br><br>・1人目が相手の視野を狭める（外か内か）<br>・2人目以降は1人目が切った方向前提に配置<br>・奪いどころは<b>サイドの低い位置</b>が現実的<br>・セカンドボール対策にボランチが少し引く`;
@@ -832,9 +967,9 @@ function generateTacticalReply(q) {
     return `得点の仕組み化は<b>「誰が・どこで・何をする」を決める</b>こと。<br><br>・得点パターンを3つに絞る（サイド崩し／ロングカウンター／セットプレー）<br>・試合前に1つ優先パターンを決める<br>・FWは<b>ニアゾーンへの飛び込み</b>を毎試合3本作る<br>・サイドで詰まったら必ずやり直す`;
   }
   if (/モチベ|やる気|続か|継続/.test(q)) {
-    return `やる気ではなく<b>仕組み</b>で解決します。<br><br>・練習日時をカレンダーに先に入れる<br>・「10分だけ」でOKにする<br>・毎回このアプリに記録（可視化）<br>・仲間と月1試合の約束<br><br>ちなみに${DATA.user.name}さんは<b>${DATA.streak}日連続</b>継続中。自信を持って。`;
+    return `やる気ではなく<b>仕組み</b>で解決します。<br><br>・練習日時をカレンダーに先に入れる<br>・「10分だけ」でOKにする<br>・毎回このアプリに記録（可視化）<br>・仲間と月1試合の約束<br><br>ちなみに${DATA.user.name}さんは<b>${DATA.streak}日連続</b>継続中。`;
   }
-  return `具体的に状況を教えてもらえると精度が上がります。<br><br>・相手のフォーメーションや強み／弱み<br>・自チームの得意な形<br>・スコアや残り時間など試合の局面<br><br>例：「相手が4-3-3で前から来る。自分はCB。縦パスを通されたくない」`;
+  return `質問を受け取りました。以下の情報があれば、より具体的に回答できます。<br><br>・相手のフォーメーション<br>・自チームの得意な形<br>・スコアや残り時間`;
 }
 
 function scrollChatBottom() {
@@ -1473,6 +1608,44 @@ function openSettings() {
           ${['GK','DF','MF','FW'].map(p => `<option ${p===DATA.settings.position?'selected':''}>${p}</option>`).join('')}
         </select>
       </div>
+      <div>
+        <label class="text-xs text-gray-500 block mb-1">年代／カテゴリ</label>
+        <select id="set-age" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          ${['小学生','中学生','高校生','大学生','大人（社会人・草サッカー）','シニア'].map(p => `<option ${p===(DATA.settings.ageGroup||'大人（社会人・草サッカー）')?'selected':''}>${p}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="text-xs text-gray-500 block mb-1">レベル</label>
+        <select id="set-level" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          ${['初心者','初級〜中級','中級','中級〜上級','上級・セミプロ'].map(p => `<option ${p===(DATA.settings.level||'初級〜中級')?'selected':''}>${p}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="mt-4 border-t pt-4">
+      <div class="font-bold text-sm mb-2 flex items-center gap-2">🤖 AI設定（戦術チャット）${DATA.ai && DATA.ai.apiKey ? '<span class="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">接続済み</span>' : '<span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">未設定</span>'}</div>
+      <div class="text-[11px] text-gray-600 leading-relaxed mb-2">
+        Google Geminiの無料APIキーを登録すると、あなたのチーム情報・練習記録を踏まえた本格的なコーチング回答に変わります。
+      </div>
+      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" class="block text-[11px] text-orange-600 underline mb-2">🔑 無料APIキーを取得する (Google AI Studio)</a>
+      <div class="mb-2">
+        <label class="text-xs text-gray-500 block mb-1">APIキー</label>
+        <div class="relative">
+          <input id="set-apikey" type="password" placeholder="AIza... で始まる文字列を貼り付け" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm pr-20" value="${escapeHtml((DATA.ai && DATA.ai.apiKey) || '')}" />
+          <button type="button" onclick="toggleApiKeyVisibility()" class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-500 border border-gray-200 rounded px-2 py-1">表示</button>
+        </div>
+      </div>
+      <div class="mb-2">
+        <label class="text-xs text-gray-500 block mb-1">モデル</label>
+        <select id="set-model" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          ${[
+            ['gemini-2.0-flash','Gemini 2.0 Flash（推奨・速い）'],
+            ['gemini-2.0-flash-lite','Gemini 2.0 Flash Lite（最速・省コスト）'],
+            ['gemini-1.5-pro','Gemini 1.5 Pro（高精度・回答遅め）'],
+            ['gemini-2.5-flash','Gemini 2.5 Flash（最新版）']
+          ].map(([v,l]) => `<option value="${v}" ${v===((DATA.ai&&DATA.ai.model)||'gemini-2.0-flash')?'selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+      <button onclick="testAIKey()" class="w-full border border-orange-400 text-orange-600 py-2 rounded-lg text-xs font-bold">🧪 APIキーの動作テスト</button>
     </div>
     <div class="mt-4 border-t pt-4">
       <div class="font-bold text-sm mb-2">データ管理</div>
@@ -1499,6 +1672,16 @@ function saveSettings() {
   DATA.user.name = newName;
   DATA.settings.team = document.getElementById('set-team').value.trim();
   DATA.settings.position = document.getElementById('set-pos').value;
+  const ageEl = document.getElementById('set-age');
+  const levelEl = document.getElementById('set-level');
+  if (ageEl) DATA.settings.ageGroup = ageEl.value;
+  if (levelEl) DATA.settings.level = levelEl.value;
+  const keyEl = document.getElementById('set-apikey');
+  const modelEl = document.getElementById('set-model');
+  if (!DATA.ai) DATA.ai = { provider: 'gemini', apiKey: '', model: 'gemini-2.0-flash' };
+  if (keyEl) DATA.ai.apiKey = keyEl.value.trim();
+  if (modelEl) DATA.ai.model = modelEl.value;
+  DATA.ai.provider = 'gemini';
   saveData();
   // プロフィール側にも同期
   const active = getActiveProfile();
@@ -1506,6 +1689,43 @@ function saveSettings() {
   closeModal();
   toast('設定を保存しました');
   render();
+}
+
+function toggleApiKeyVisibility() {
+  const el = document.getElementById('set-apikey');
+  if (!el) return;
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+async function testAIKey() {
+  const keyEl = document.getElementById('set-apikey');
+  const modelEl = document.getElementById('set-model');
+  const key = keyEl ? keyEl.value.trim() : '';
+  const model = modelEl ? modelEl.value : 'gemini-2.0-flash';
+  if (!key) { toast('APIキーを入力してください'); return; }
+  toast('テスト中…');
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: '「接続テスト成功」とだけ返してください。' }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 20 }
+      })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      let m = t;
+      try { const j = JSON.parse(t); m = j.error && j.error.message || t; } catch(e){}
+      toast('❌ ' + (m.slice(0,80)));
+      return;
+    }
+    const data = await res.json();
+    const txt = ((data.candidates||[])[0]?.content?.parts||[]).map(p=>p.text).join('').trim();
+    toast('✅ 接続OK: ' + (txt || '応答あり'));
+  } catch (e) {
+    toast('❌ ' + (e.message || String(e)).slice(0,80));
+  }
 }
 
 function exportData() {
